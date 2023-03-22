@@ -132,6 +132,9 @@ func extrapolatedRate(vals []parser.Value, args parser.Expressions, enh *EvalNod
 	})
 }
 
+//** This function was apparently copied from extrapolatedRate.
+//** Each Point has its own msec timestamp stored in T. And the EvalNodeHelper has the evaluation timestamp in Ts.
+
 // extendedRate is a utility function for xrate/xincrease/xdelta.
 // It calculates the rate (allowing for counter resets if isCounter is true),
 // taking into account the last sample before the range start, and returns
@@ -147,21 +150,23 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	)
 
 	points := samples.Points
+	//** Cannot compute rate with 0 or 1 data points.
 	if len(points) < 2 {
 		return enh.Out
 	}
 	sampledRange := float64(points[len(points)-1].T - points[0].T)
-	averageInterval := sampledRange / float64(len(points)-1)
+	averageInterval := sampledRange / float64(len(points)-1) //** msec; if any samples are missing, this will be higher than the scrape interval
 
 	firstPoint := 0
 	// If the point before the range is too far from rangeStart, drop it.
-	if float64(rangeStart-points[0].T) > averageInterval {
+	if float64(rangeStart-points[0].T) > averageInterval { //** There's 0 slop here, so we could drop the point even if it was scraped 1 msec early
+	        //** Repeating the above check for 0 or 1 data points, since we're dropping the first.
 		if len(points) < 3 {
 			return enh.Out
 		}
 		firstPoint = 1
-		sampledRange = float64(points[len(points)-1].T - points[1].T)
-		averageInterval = sampledRange / float64(len(points)-2)
+		sampledRange = float64(points[len(points)-1].T - points[1].T) //** repeating above code "
+		averageInterval = sampledRange / float64(len(points)-2) //** repeating above code "
 	}
 
 	var (
