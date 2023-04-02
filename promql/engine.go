@@ -812,6 +812,7 @@ func (ng *Engine) getTimeRangesForSelector(s *parser.EvalStmt, n *parser.VectorS
 	start = start - offsetMilliseconds
 	end = end - offsetMilliseconds
 
+	//** If Extended Range, back up the start by lookbackDelta.
 	f, ok := parser.Functions[extractFuncFromPath(path)]
 	if ok && f.ExtRange {
 		start -= durationMilliseconds(ng.lookbackDelta)
@@ -845,7 +846,7 @@ func (ng *Engine) populateSeries(querier storage.Querier, s *parser.EvalStmt) {
 			// point, this is how far back we need to look for it.
 			f, ok := parser.Functions[hints.Func]
 			if ok && f.ExtRange {
-				hints.Start = hints.Start - durationMilliseconds(ng.lookbackDelta)
+				hints.Start -= durationMilliseconds(ng.lookbackDelta)
 			}
 
 			n.UnexpandedSeriesSet = querier.Select(false, hints, n.LabelMatchers...)
@@ -1823,8 +1824,8 @@ func (ev *evaluator) matrixSelector(node *parser.MatrixSelector) (Matrix, storag
 // values). Any such points falling before mint are discarded; points that fall
 // into the [mint, maxt] range are retained; only points with later timestamps
 // are populated from the iterator.
+//** mint, maxt are min timestamp and max timestamp for this slice, in milliseconds
 func (ev *evaluator) matrixIterSlice(it *storage.BufferedSeriesIterator, mint, maxt int64, extRange bool, out []Point) []Point {
-	extMint := mint - durationMilliseconds(ev.lookbackDelta)
 	if len(out) > 0 && out[len(out)-1].T >= mint {
 		// There is an overlap between previous and current ranges, retain common
 		// points. In most such cases:
@@ -1833,20 +1834,24 @@ func (ev *evaluator) matrixIterSlice(it *storage.BufferedSeriesIterator, mint, m
 		// so a linear search will be as fast as a binary search.
 		var drop int
 		if !extRange {
+			//** set drop to index of first data point whose index is inside our range
 			for drop = 0; out[drop].T < mint; drop++ {
 			}
 			// Only append points with timestamps after the last timestamp we have.
+			//** reset mint to 1 msec after last timestamp in out
 			mint = out[len(out)-1].T + 1
 		} else {
 			// This is an argument to an extended range function, first go past mint.
+			//** set drop to index of first data point whose index is inside our range (same as above, but with overflow check)
 			for drop = 0; drop < len(out) && out[drop].T <= mint; drop++ {
 			}
 			// Then, go back one sample if within lookbackDelta of mint.
-			if drop > 0 && out[drop-1].T >= extMint {
+			if drop > 0 && out[drop-1].T >= (mint-durationMilliseconds(ev.lookbackDelta)) {
 				drop--
 			}
 			if out[len(out)-1].T >= mint {
 				// Only append points with timestamps after the last timestamp we have.
+				//** reset mint to 1 msec after last timestamp in out
 				mint = out[len(out)-1].T + 1
 			}
 		}

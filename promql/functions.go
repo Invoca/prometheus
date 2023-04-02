@@ -143,11 +143,9 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	ms := args[0].(*parser.MatrixSelector)
 	vs := ms.VectorSelector.(*parser.VectorSelector)
 
-	var (
-		samples    = vals[0].(Matrix)[0]
-		rangeStart = enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
-		rangeEnd   = enh.Ts - durationMilliseconds(vs.Offset)
-	)
+	samples := vals[0].(Matrix)[0]
+	rangeStart := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
+	rangeEnd := enh.Ts - durationMilliseconds(vs.Offset)
 
 	points := samples.Points
 	//** Cannot compute rate with 0 or 1 data points.
@@ -160,29 +158,32 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	firstPoint := 0
 	// If the point before the range is too far from rangeStart, drop it.
 	if float64(rangeStart-points[0].T) > averageInterval { //** There's 0 slop here, so we could drop the point even if it was scraped 1 msec early
-	        //** Repeating the above check for 0 or 1 data points, since we're dropping the first.
+		//** Repeating the above check for 0 or 1 data points, with +1. I'm pretty sure these checks could be done just once.
 		if len(points) < 3 {
 			return enh.Out
 		}
 		firstPoint = 1
 		sampledRange = float64(points[len(points)-1].T - points[1].T) //** repeating above code "
-		averageInterval = sampledRange / float64(len(points)-2) //** repeating above code "
+		averageInterval = sampledRange / float64(len(points)-2)       //** repeating above code "
 	}
 
-	var (
-		counterCorrection float64
-		lastValue         float64
-	)
-	if isCounter {
+	counterCorrection := float64(0.0)
+	lastValue := float64(0.0)
+
+	if isCounter { //** isCounter means we were called from rate or increase or delta... which means you can't use those for gauges?
+		//** Here, we can handle the initial start from "null" (no previous data point)
+		//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
+		//** counterCorrection = points[firstPoint].V
+		//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
 		for i := firstPoint; i < len(points); i++ {
 			sample := points[i]
-			if sample.V < lastValue {
-				counterCorrection += lastValue
+			if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
+				counterCorrection += lastValue //** Accumulate the sum of backward steps
 			}
 			lastValue = sample.V
 		}
 	}
-	resultValue := points[len(points)-1].V - points[firstPoint].V + counterCorrection
+	resultValue := points[len(points)-1].V - points[firstPoint].V + counterCorrection //** last.V - first.V + backward correction
 
 	// Duration between last sample and boundary of range.
 	durationToEnd := float64(rangeEnd - points[len(points)-1].T)
