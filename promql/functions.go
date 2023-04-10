@@ -134,32 +134,6 @@ func extrapolatedRate(vals []parser.Value, args parser.Expressions, enh *EvalNod
 	})
 }
 
-// Infers the scrape interval in msec by taking the median interval among the first 25.
-// By using the median, we avoid the highs (late or missed scrape) and the lows
-// (where a late scrape caused the next to be too close).
-func inferScrapeInterval(points []Point) int64 {
-	if len(points) == 0 {
-		panic(errors.Errorf("no points to work on"))
-	}
-
-	// Compute up to 25 time intervals and store them in intervalArray.
-	var intervalArray [25]int64
-	var i int
-	for i = 0; i < (len(points)-1) && i < len(intervalArray); i++ {
-		intervalArray[i] = points[i+1].T - points[i].T
-	}
-
-	// Slice and sort the intervals (may be fewer than 25, if points was shorter than 26).
-	intervals := intervalArray[:i]
-	sort.Slice(intervals, func(i0, i1 int) bool { return intervals[i0] < intervals[i1] })
-
-	// Return the median interval.
-	return intervals[len(intervals)/2]
-}
-
-const scrapeIntervalMarginPercent float64 = 0.40
-const elideSamplesAfter int = 10
-
 //** This function was apparently copied from extrapolatedRate.
 //** Each Point has its own msec timestamp stored in T. And the EvalNodeHelper has the evaluation timestamp in Ts.
 
@@ -228,6 +202,32 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 		Point: Point{V: resultValue},
 	})
 }
+
+// Infers the scrape interval in msec by taking the median interval among the first 25.
+// By using the median, we avoid the highs (late or missed scrape) and the lows
+// (where a late scrape caused the next to be too close).
+func inferScrapeInterval(points []Point) int64 {
+	if len(points) == 0 {
+		panic(errors.Errorf("no points to work on"))
+	}
+
+	// Compute up to 25 time intervals and store them in intervalArray.
+	var intervalArray [25]int64
+	var i int
+	for i = 0; i < (len(points)-1) && i < len(intervalArray); i++ {
+		intervalArray[i] = points[i+1].T - points[i].T
+	}
+
+	// Slice and sort the intervals (may be fewer than 25, if points was shorter than 26).
+	intervals := intervalArray[:i]
+	sort.Slice(intervals, func(i0, i1 int) bool { return intervals[i0] < intervals[i1] })
+
+	// Return the median interval.
+	return intervals[len(intervals)/2]
+}
+
+const scrapeIntervalMarginPercent float64 = 0.40
+const elideSamplesAfter int = 10
 
 // extendedRate0 is a utility function for xrate0/xincrease0.
 // It calculates the rate (allowing for counter resets and including the startup value from 0),
