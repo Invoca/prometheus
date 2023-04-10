@@ -216,15 +216,17 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 		}
 	}
 
-
 	counterCorrection := float64(0.0)
-	lastValue := float64(0.0)
 
-	if isCounter { //** isCounter means we were called from rate or increase or delta... which means you can't use those for gauges?
+	if isCounter { //** isCounter means we were called from xrate or xincrease or xdelta... which means you can't use those for gauges.
 		//** Here, we can handle the initial start from "null" (no previous data point)
 		//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
 		//** counterCorrection = points[firstPoint].V
 		//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
+		lastValue := float64(0.0)
+		if firstPoint == 0 { //** We have no preceding point, so we assume pod just started.
+			//counterCorrection += points[0].V //** The 0 Fix: count this first step.
+		}
 		for i := firstPoint; i < len(points); i++ {
 			sample := points[i]
 			if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
@@ -243,8 +245,8 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	// the sampled range to the requested range.
 	if points[firstPoint].T <= rangeStart && durationToEnd < scrapeInterval + scrapeIntervalMargin {
 		sampledRange := float64(points[len(points)-1].T - points[firstPoint].T)
-		adjustToRange := float64(durationMilliseconds(ms.Range))
-		resultValue *= (adjustToRange / sampledRange)
+		requestedRange := float64(durationMilliseconds(ms.Range))
+		resultValue *= (requestedRange / sampledRange)
 	}
 
 	if isRate {
