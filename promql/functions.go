@@ -161,9 +161,7 @@ const scrapeIntervalMarginPercent float64 = 0.40
 const elide_samples_after int = 10
 
 //** This function was apparently copied from extrapolatedRate.
-//** Each Point has its own msec timestamp stored in T. And the EvalNodeHelper has the evaluation msec timestamp in Ts.
-//** Note the caller of this method has arranged to have at most 1 extra data point at the front before the range,
-//** taken from the lookbackInterval.
+//** Each Point has its own msec timestamp stored in T. And the EvalNodeHelper has the evaluation timestamp in Ts.
 
 // extendedRate is a utility function for xrate/xincrease/xdelta.
 // It calculates the rate (allowing for counter resets if isCounter is true),
@@ -173,60 +171,34 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	ms := args[0].(*parser.MatrixSelector)
 	vs := ms.VectorSelector.(*parser.VectorSelector)
 
+	samples := vals[0].(Matrix)[0]
 	rangeStart := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
 	rangeEnd := enh.Ts - durationMilliseconds(vs.Offset)
 
-	samples := vals[0].(Matrix)[0]
 	points := samples.Points
-
 	//** Cannot compute rate with 0 or 1 data points.
 	if len(points) < 2 {
 		return enh.Out
 	}
+	sampledRange := float64(points[len(points)-1].T - points[0].T)
+	averageInterval := sampledRange / float64(len(points)-1) //** msec; if any samples are missing, this will be higher than the scrape interval
 
-	scrapeInterval := inferScrapeInterval(points) //** milliseconds
-	scrapeIntervalMargin := int64(float64(scrapeInterval) * float64(scrapeIntervalMarginPercent))
-
-	log.Printf("extendedRate: isCounter: %t, isRate: %t, scrapeInterval: %.1f", isCounter, isRate, float64(scrapeInterval)/1000.0)
-	log.Printf("extendedRate: enh range: %.3f..%.3f (offset %.3f)", float64(rangeStart)/1000.0, float64(rangeEnd)/1000.0, float64(vs.Offset)/1000.0)
-
-	buffer := new(bytes.Buffer)
-	for i, point := range points {
-		if i == elide_samples_after && len(points)-1 > elide_samples_after {
-			fmt.Fprintf(buffer, "...")
-		} else if i > elide_samples_after && len(points)-i > elide_samples_after {
-			continue
-		} else {
-			if i > 0 {
-				fmt.Fprintf(buffer, ", ")
-			}
-			fmt.Fprintf(buffer, "[%d,%.1f]", point.T/1000, point.V)
-		}
-	}
-	log.Println("extendedRate: samples:", buffer.String())
-
-	//** If the point before the range is too far before rangeStart, skip over it.
 	firstPoint := 0
-	if (rangeStart-points[0].T) > scrapeInterval + scrapeIntervalMargin {
-		firstPoint = 1
-
-		//** Cannot compute rate with 0 or 1 data points.
-		if len(points) < 2 {
+	// If the point before the range is too far from rangeStart, drop it.
+	if float64(rangeStart-points[0].T) > averageInterval { //** There's 0 slop here, so we could drop the point even if it was scraped 1 msec early
+		//** Repeating the above check for 0 or 1 data points, with +1.
+		if len(points) < 3 { //** This looks like a bug to me. 2 points is enough to measure an increase. -Colin
 			return enh.Out
 		}
+		firstPoint = 1
+		sampledRange = float64(points[len(points)-1].T - points[1].T) //** repeating above code
+		averageInterval = sampledRange / float64(len(points)-2)       //** repeating above code
 	}
 
 	counterCorrection := float64(0.0)
+	lastValue := float64(0.0)
 
-	if isCounter { //** isCounter means we were called from xrate or xincrease or xdelta... which means you can't use those for gauges.
-		//** Here, we can handle the initial start from "null" (no previous data point)
-		//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
-		//** counterCorrection = points[firstPoint].V
-		//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
-		lastValue := float64(0.0)
-		if firstPoint == 0 { //** We have no preceding point, so we assume pod just started.
-			//counterCorrection += points[0].V //** The 0 Fix: count this first step.
-		}
+	if isCounter { //** called from rate or increase (not delta)
 		for i := firstPoint; i < len(points); i++ {
 			sample := points[i]
 			if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
@@ -238,15 +210,14 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	resultValue := points[len(points)-1].V - points[firstPoint].V + counterCorrection //** last.V - first.V + backward correction
 
 	// Duration between last sample and boundary of range.
-	durationToEnd := rangeEnd - points[len(points)-1].T
+	durationToEnd := float64(rangeEnd - points[len(points)-1].T)
 
 	// If the points cover the whole range (i.e. they start just before the
 	// range start and end just before the range end) adjust the value from
 	// the sampled range to the requested range.
-	if points[firstPoint].T <= rangeStart && durationToEnd < scrapeInterval + scrapeIntervalMargin {
-		sampledRange := float64(points[len(points)-1].T - points[firstPoint].T)
-		requestedRange := float64(durationMilliseconds(ms.Range))
-		resultValue *= (requestedRange / sampledRange)
+	if points[firstPoint].T <= rangeStart && durationToEnd < averageInterval {
+		adjustToRange := float64(durationMilliseconds(ms.Range))
+		resultValue *= (adjustToRange / sampledRange)
 	}
 
 	if isRate {
