@@ -370,8 +370,20 @@ var Functions = map[string]*Function{
 		ReturnType: ValueTypeVector,
 		ExtRange:   true,
 	},
+	"xincrease0": {
+		Name:       "xincrease0",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
 	"xrate": {
 		Name:       "xrate",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"xrate0": {
+		Name:       "xrate0",
 		ArgTypes:   []ValueType{ValueTypeMatrix},
 		ReturnType: ValueTypeVector,
 		ExtRange:   true,

@@ -258,6 +258,98 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	})
 }
 
+// extendedRate0 is a utility function for xrate0/xincrease0.
+// It calculates the rate (allowing for counter resets and including the startup value from 0),
+// taking into account the last sample before the range start, and returns
+// the result as either per-second (if isRate is true) or overall.
+func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper, isRate bool) Vector {
+	ms := args[0].(*parser.MatrixSelector)
+	vs := ms.VectorSelector.(*parser.VectorSelector)
+
+	rangeStart := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
+	rangeEnd := enh.Ts - durationMilliseconds(vs.Offset)
+
+	samples := vals[0].(Matrix)[0]
+	points := samples.Points
+
+	//** Cannot compute rate with 0 or 1 data points.
+	if len(points) < 2 {
+		return enh.Out
+	}
+
+	scrapeInterval := inferScrapeInterval(points) //** milliseconds
+	scrapeIntervalMargin := int64(float64(scrapeInterval) * float64(scrapeIntervalMarginPercent))
+
+	log.Printf("extendedRate: isRate: %t, scrapeInterval: %.1f", isRate, float64(scrapeInterval)/1000.0)
+	log.Printf("extendedRate: enh range: %.3f..%.3f (offset %.3f)", float64(rangeStart)/1000.0, float64(rangeEnd)/1000.0, float64(vs.Offset)/1000.0)
+
+	buffer := new(bytes.Buffer)
+	for i, point := range points {
+		if i == elide_samples_after && len(points)-1 > elide_samples_after {
+			fmt.Fprintf(buffer, "...")
+		} else if i > elide_samples_after && len(points)-i > elide_samples_after {
+			continue
+		} else {
+			if i > 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "[%d,%.1f]", point.T/1000, point.V)
+		}
+	}
+	log.Println("extendedRate: samples:", buffer.String())
+
+	//** If the point before the range is too far before rangeStart, skip over it.
+	firstPoint := 0
+	if (rangeStart-points[0].T) > scrapeInterval + scrapeIntervalMargin {
+		firstPoint = 1
+
+		//** Cannot compute rate with 0 or 1 data points.
+		if len(points) < 2 {
+			return enh.Out
+		}
+	}
+
+	counterCorrection := float64(0.0)
+
+	//** Here, we can handle the initial start from "null" (no previous data point)
+	//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
+	//** counterCorrection = points[firstPoint].V
+	//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
+	lastValue := float64(0.0)
+	if firstPoint == 0 { //** We have no preceding point, so we assume pod just started.
+		//counterCorrection += points[0].V //** The 0 Fix: count this first step.
+	}
+	for i := firstPoint; i < len(points); i++ {
+		sample := points[i]
+		if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
+			counterCorrection += lastValue //** Accumulate the sum of backward steps
+		}
+		lastValue = sample.V
+	}
+
+	resultValue := points[len(points)-1].V - points[firstPoint].V + counterCorrection //** last.V - first.V + backward correction
+
+	// Duration between last sample and boundary of range.
+	durationToEnd := rangeEnd - points[len(points)-1].T
+
+	// If the points cover the whole range (i.e. they start just before the
+	// range start and end just before the range end) adjust the value from
+	// the sampled range to the requested range.
+	if points[firstPoint].T <= rangeStart && durationToEnd < scrapeInterval + scrapeIntervalMargin {
+		sampledRange := float64(points[len(points)-1].T - points[firstPoint].T)
+		requestedRange := float64(durationMilliseconds(ms.Range))
+		resultValue *= (requestedRange / sampledRange)
+	}
+
+	if isRate {
+		resultValue /= ms.Range.Seconds()
+	}
+
+	return append(enh.Out, Sample{
+		Point: Point{V: resultValue},
+	})
+}
+
 // === delta(Matrix parser.ValueTypeMatrix) Vector ===
 func funcDelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extrapolatedRate(vals, args, enh, false, false)
@@ -283,9 +375,19 @@ func funcXrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper
 	return extendedRate(vals, args, enh, true, true)
 }
 
+// === xrate0(node parser.ValueTypeMatrix) Vector ===
+func funcXrate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	return extendedRate0(vals, args, enh, true)
+}
+
 // === xincrease(node parser.ValueTypeMatrix) Vector ===
 func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extendedRate(vals, args, enh, true, false)
+}
+
+// === xincrease0(node parser.ValueTypeMatrix) Vector ===
+func funcXincrease0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	return extendedRate0(vals, args, enh, false)
 }
 
 // === irate(node parser.ValueTypeMatrix) Vector ===
@@ -1278,7 +1380,9 @@ var FunctionCalls = map[string]FunctionCall{
 	"vector":             funcVector,
 	"xdelta":             funcXdelta,
 	"xincrease":          funcXincrease,
+	"xincrease0":         funcXincrease0,
 	"xrate":              funcXrate,
+	"xrate0":             funcXrate0,
 	"year":               funcYear,
 }
 
