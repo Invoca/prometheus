@@ -158,7 +158,7 @@ func inferScrapeInterval(points []Point) int64 {
 }
 
 const scrapeIntervalMarginPercent float64 = 0.40
-const elide_samples_after int = 10
+const elideSamplesAfter int = 10
 
 //** This function was apparently copied from extrapolatedRate.
 //** Each Point has its own msec timestamp stored in T. And the EvalNodeHelper has the evaluation timestamp in Ts.
@@ -251,7 +251,7 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	scrapeInterval := inferScrapeInterval(points) //** milliseconds
 	scrapeIntervalMargin := int64(float64(scrapeInterval) * float64(scrapeIntervalMarginPercent))
 
-	firstPoint := 1 // Assume normal case: point 0 is before the range +/-, so we can use it to measure increase.
+	firstPoint := 1          // Assume normal case: point 0 is before the range +/-, so we can use it to measure increase.
 	lastValue := points[0].V // Prime the lastValue with the preceding value (before the range +/-).
 
 	// The 0 Fix: Check for fresh pod start case where we have no point before the range +/-.
@@ -268,9 +268,9 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	{
 		buffer := new(bytes.Buffer)
 		for i, point := range points {
-			if i == elide_samples_after && len(points)-1 > elide_samples_after {
+			if i == elideSamplesAfter && len(points)-1 > elideSamplesAfter {
 				fmt.Fprintf(buffer, "...")
-			} else if i > elide_samples_after && len(points)-i > elide_samples_after {
+			} else if i > elideSamplesAfter && len(points)-i > elideSamplesAfter {
 				continue
 			} else {
 				if i > 0 {
