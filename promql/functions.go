@@ -272,7 +272,7 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	samples := vals[0].(Matrix)[0]
 	points := samples.Points
 
-	//** Cannot compute rate with 0 or 1 data points.
+	// Cannot compute rate with 0 or 1 data points.
 	if len(points) < 2 {
 		return enh.Out
 	}
@@ -280,65 +280,65 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	scrapeInterval := inferScrapeInterval(points) //** milliseconds
 	scrapeIntervalMargin := int64(float64(scrapeInterval) * float64(scrapeIntervalMarginPercent))
 
-	log.Printf("extendedRate: isRate: %t, scrapeInterval: %.1f", isRate, float64(scrapeInterval)/1000.0)
-	log.Printf("extendedRate: enh range: %.3f..%.3f (offset %.3f)", float64(rangeStart)/1000.0, float64(rangeEnd)/1000.0, float64(vs.Offset)/1000.0)
+	firstPoint := 1 // Assume normal case: point 0 is before the range +/-, so we can use it to measure increase.
+	lastValue := points[0].V // Prime the lastValue with the preceding value (before the range +/-).
 
-	buffer := new(bytes.Buffer)
-	for i, point := range points {
-		if i == elide_samples_after && len(points)-1 > elide_samples_after {
-			fmt.Fprintf(buffer, "...")
-		} else if i > elide_samples_after && len(points)-i > elide_samples_after {
-			continue
-		} else {
-			if i > 0 {
-				fmt.Fprintf(buffer, ", ")
+	// The 0 Fix: Check for fresh pod start case where we have no point before the range +/-.
+	// Treat this as if we had a 0 just before the range.
+	if points[0].T >= rangeStart-scrapeIntervalMargin {
+		firstPoint = 0
+		lastValue = 0.0
+	}
+
+	// Debug logging
+	log.Printf("extendedRate0: isRate: %t, firstPoint: %d, scrapeInterval: %.1f", isRate, firstPoint, float64(scrapeInterval)/1000.0)
+	log.Printf("extendedRate0: enh range: %.3f..%.3f (offset %.3f)", float64(rangeStart)/1000.0, float64(rangeEnd)/1000.0, float64(vs.Offset)/1000.0)
+
+	{
+		buffer := new(bytes.Buffer)
+		for i, point := range points {
+			if i == elide_samples_after && len(points)-1 > elide_samples_after {
+				fmt.Fprintf(buffer, "...")
+			} else if i > elide_samples_after && len(points)-i > elide_samples_after {
+				continue
+			} else {
+				if i > 0 {
+					fmt.Fprintf(buffer, ", ")
+				}
+				fmt.Fprintf(buffer, "[%d,%.1f]", point.T/1000, point.V)
 			}
-			fmt.Fprintf(buffer, "[%d,%.1f]", point.T/1000, point.V)
 		}
+		log.Println("extendedRate0: samples:", buffer.String())
 	}
-	log.Println("extendedRate: samples:", buffer.String())
 
-	//** If the point before the range is too far before rangeStart, skip over it.
-	firstPoint := 0
-	if (rangeStart-points[0].T) > scrapeInterval + scrapeIntervalMargin {
-		firstPoint = 1
+	// Simplest result: the difference beteween last point's value and lastValue.
+	resultValue := points[len(points)-1].V - lastValue
 
-		//** Cannot compute rate with 0 or 1 data points.
-		if len(points) < 2 {
-			return enh.Out
+	// Correct for any case where a process restart caused the increase to turn negative.
+	for _, point := range points[firstPoint:] {
+		step := point.V - lastValue
+		if step < 0 {
+			resultValue += -step
 		}
+		lastValue = point.V
 	}
 
-	counterCorrection := float64(0.0)
-
-	//** Here, we can handle the initial start from "null" (no previous data point)
-	//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
-	//** counterCorrection = points[firstPoint].V
-	//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
-	lastValue := float64(0.0)
-	if firstPoint == 0 { //** We have no preceding point, so we assume pod just started.
-		//counterCorrection += points[0].V //** The 0 Fix: count this first step.
-	}
-	for i := firstPoint; i < len(points); i++ {
-		sample := points[i]
-		if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
-			counterCorrection += lastValue //** Accumulate the sum of backward steps
+	// If the first or last sampled point is outside the range boundaries +/-, assume we are missing a sample at
+	// that edge and extrapolate from the sampled range up to the requested range.
+	{
+		sampledStart := points[firstPoint].T
+		sampledEnd := points[len(points)-1].T
+		if int64(math.Abs(float64(rangeStart-sampledStart))) < scrapeIntervalMargin {
+			sampledStart = rangeStart // Close enough, so snap to start
 		}
-		lastValue = sample.V
-	}
-
-	resultValue := points[len(points)-1].V - points[firstPoint].V + counterCorrection //** last.V - first.V + backward correction
-
-	// Duration between last sample and boundary of range.
-	durationToEnd := rangeEnd - points[len(points)-1].T
-
-	// If the points cover the whole range (i.e. they start just before the
-	// range start and end just before the range end) adjust the value from
-	// the sampled range to the requested range.
-	if points[firstPoint].T <= rangeStart && durationToEnd < scrapeInterval + scrapeIntervalMargin {
-		sampledRange := float64(points[len(points)-1].T - points[firstPoint].T)
-		requestedRange := float64(durationMilliseconds(ms.Range))
-		resultValue *= (requestedRange / sampledRange)
+		if int64(math.Abs(float64(rangeEnd-sampledEnd))) < scrapeIntervalMargin {
+			sampledEnd = rangeEnd // Close enough, so snap to end
+		}
+		if sampledStart != rangeStart || sampledEnd != rangeEnd {
+			sampledRange := sampledEnd - sampledStart
+			requestedRange := durationMilliseconds(ms.Range)
+			resultValue *= (float64(requestedRange) / float64(sampledRange))
+		}
 	}
 
 	if isRate {
