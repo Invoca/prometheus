@@ -226,7 +226,6 @@ func inferScrapeInterval(points []Point) int64 {
 	return intervals[len(intervals)/2]
 }
 
-const scrapeIntervalMarginPercent float64 = 0.40
 const elideSamplesAfter int = 10
 
 // extendedRate0 is a utility function for xrate0/xincrease0.
@@ -249,14 +248,13 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	}
 
 	scrapeIntervalMsec := inferScrapeInterval(points) //** milliseconds
-	scrapeIntervalMarginMsec := int64(float64(scrapeIntervalMsec) * float64(scrapeIntervalMarginPercent))
 
 	firstPoint := 1          // Assume normal case: point 0 is before the range +/-, so we can use it to measure increase.
 	lastValue := points[0].V // Prime the lastValue with the preceding value (before the range +/-).
 
-	// The 0 Fix: Check for fresh pod start case where we have no point before the range +/-.
-	// Treat this as if we had a 0 just before the range.
-	if points[0].T >= rangeStartMsec-scrapeIntervalMarginMsec {
+	// The 0 Fix: Check for fresh pod start case where we have no point before the range.
+	// Treat this as if we had a 0 to start.
+	if points[0].T >= rangeStartMsec {
 		firstPoint = 0
 		lastValue = 0.0
 	}
@@ -300,10 +298,10 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	{
 		sampledStartMsec := points[firstPoint].T
 		sampledEndMsec := points[len(points)-1].T
-		if int64(math.Abs(float64(rangeStartMsec-sampledStartMsec))) < scrapeIntervalMarginMsec {
+		if int64(math.Abs(float64(rangeStartMsec-sampledStartMsec))) < scrapeIntervalMsec {
 			sampledStartMsec = rangeStartMsec // Close enough, so snap to start
 		}
-		if int64(math.Abs(float64(rangeEndMsec-sampledEndMsec))) < scrapeIntervalMarginMsec {
+		if int64(math.Abs(float64(rangeEndMsec-sampledEndMsec))) < scrapeIntervalMsec {
 			sampledEndMsec = rangeEndMsec // Close enough, so snap to end
 		}
 		if sampledStartMsec != rangeStartMsec || sampledEndMsec != rangeEndMsec {

@@ -35,8 +35,8 @@ eval instant at 24s xrate(http_requests[50s])
   {path="/bar"} .08
 
 eval instant at 24s xrate0(http_requests[50s])
-  {path="/foo"} .05
-  {path="/bar"} .2
+  {path="/foo"} 0.04166666666666667
+  {path="/bar"} 0.16666666666666669
 
 # 3. Eval 1 second later compared to (1).
 #    * path="/foo" rate should be same or fractionally lower ("longer" sample, same actual increase).
@@ -136,15 +136,15 @@ eval instant at 9s xrate(http_requests[10s])
 
 eval instant at 9s xrate0(http_requests[10s])
   {path="/foo"} 0
-  {path="/bar"} 0.16666666666666669
+  {path="/bar"} 0.1
 
 eval instant at 19s xrate(http_requests[10s])
   {path="/foo"} 0.1
   {path="/bar"} 0.2
 
 eval instant at 19s xrate0(http_requests[10s])
-  {path="/foo"} 0.16666666666666669
-  {path="/bar"} 0.33333333333333337
+  {path="/foo"} 0.1
+  {path="/bar"} 0.2
 
 eval instant at 29s xrate(http_requests[10s])
   {path="/foo"} 0
@@ -152,7 +152,7 @@ eval instant at 29s xrate(http_requests[10s])
 
 eval instant at 29s xrate0(http_requests[10s])
   {path="/foo"} 0
-  {path="/bar"} 0.33333333333333337
+  {path="/bar"} 0.2
 
 eval instant at 39s xrate(http_requests[10s])
   {path="/foo"} 0
@@ -160,7 +160,7 @@ eval instant at 39s xrate(http_requests[10s])
 
 eval instant at 39s xrate0(http_requests[10s])
   {path="/foo"} 0
-  {path="/bar"} 0.33333333333333337
+  {path="/bar"} 0.2
 
 # XXX Sees the increase in path="/foo" between timestamps 35 and 40.
 eval instant at 49s xrate(http_requests[10s])
@@ -168,8 +168,8 @@ eval instant at 49s xrate(http_requests[10s])
   {path="/bar"} 0.2
 
 eval instant at 49s xrate0(http_requests[10s])
-  {path="/foo"} 0.16666666666666669
-  {path="/bar"} 0.33333333333333337
+  {path="/foo"} 0.1
+  {path="/bar"} 0.2
 
 clear
 
@@ -282,8 +282,8 @@ eval instant at 50s xincrease(http_requests[3s])
 	{path="/bar"} 6
 
 eval instant at 50s xincrease0(http_requests[3s])
-	{path="/foo"} 6
-	{path="/bar"} 6
+	{path="/foo"} 10
+	{path="/bar"} 10
 
 eval instant at 49s xincrease(http_requests[3s])
 
@@ -319,8 +319,8 @@ eval instant at 50s xrate(http_requests[3s])
 	{path="/bar"} 2
 
 eval instant at 50s xrate0(http_requests[3s])
-	{path="/foo"} 2
-	{path="/bar"} 2
+	{path="/foo"} 3.3333333333333335
+	{path="/bar"} 3.3333333333333335
 
 eval instant at 49s xrate(http_requests[3s])
 
