@@ -261,8 +261,8 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 		lastValue = 0.0
 	}
 
-	// Simplest result: the difference beteween last point's value and lastValue.
-	resultValue := points[len(points)-1].V - lastValue
+	// Simplest result: the difference beteween first and last values.
+	resultValue := points[len(points)-1].V - points[0].V
 
 	// Debug logging
 	log.Printf("extendedRate0: isRate: %t, firstPoint: %d, scrapeIntervalMsec: %.1f", isRate, firstPoint, float64(scrapeIntervalMsec)/1000.0)
