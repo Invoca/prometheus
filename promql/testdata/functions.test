@@ -4,6 +4,41 @@ load 5s
   http_requests{path="/foo"}  1001 1001 1001 1002 1002 1002 1002 1002 1003 1003 1003
   http_requests{path="/bar"}  2001 2002 2003 2004 2005 2006 2007 2008 2009 2010 2011
 
+# With presample
+eval instant at 50s rate(http_requests[40s])
+  {path="/foo"} 0.05
+  {path="/bar"} 0.2
+
+eval instant at 50s xrate(http_requests[40s])
+  {path="/foo"} 0.05
+  {path="/bar"} 0.2
+
+eval instant at 50s xincrease(http_requests[40s])
+  {path="/foo"} 2
+  {path="/bar"} 8
+
+eval instant at 50s xincrease0(http_requests[40s])
+  {path="/foo"} 2
+  {path="/bar"} 8
+
+# Edge case--treat like presample
+eval instant at 25s xincrease(http_requests[25s])
+  {path="/foo"} 1
+  {path="/bar"} 5
+
+eval instant at 25s xincrease0(http_requests[25s])
+  {path="/foo"} 1
+  {path="/bar"} 5
+
+# Without presample - 0 Fix for fresh pod start
+eval instant at 20s xincrease(http_requests[25s])
+  {path="/foo"} 1
+  {path="/bar"} 4
+
+eval instant at 20s xincrease0(http_requests[25s])
+  {path="/foo"} 1002
+  {path="/bar"} 2005
+
 
 #
 # Timeseries starts inside range, (presumably) goes on after range end.
