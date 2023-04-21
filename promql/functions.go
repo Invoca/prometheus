@@ -337,6 +337,51 @@ func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	})
 }
 
+// yIncrease is a utility function for yrate/yincrease.
+// It calculates the increase of the range (allowing for counter resets and including the startup value from 0.0),
+// taking into account the last sample before the range start.
+func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
+	// Debug logging
+	log.Printf("yincrease: range: %.3f...%.3f", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
+
+	{
+		buffer := new(bytes.Buffer)
+		for i, point := range points {
+			if i == elideSamplesAfter && len(points)-1 > elideSamplesAfter {
+				fmt.Fprintf(buffer, "...")
+			} else if i > elideSamplesAfter && len(points)-i > elideSamplesAfter {
+				continue
+			} else {
+				if i > 0 {
+					fmt.Fprintf(buffer, ", ")
+				}
+				fmt.Fprintf(buffer, "[%.3f,%.1f]", float64(point.T)/1000.0, point.V)
+			}
+		}
+		log.Println("yincrease: samples:", buffer.String())
+	}
+
+	lastBeforeRange := float64(0.0) // This provides the 0 fix for a fresh start of a pod.
+	lastInRange := float64(0.0)
+
+	// The points are in time order, so we can just walk the list once and remember the last values
+	// seen "before" and "in" range. If there are no values in range, we use the last value before range.
+	for _, point := range points {
+		if point.T < rangeStartMsec {
+			lastBeforeRange = point.V
+		}
+		if point.T < rangeEndMsec {
+			lastInRange = point.V
+		}
+	}
+
+	result := lastInRange - lastBeforeRange
+
+	log.Printf("yincrease: returning result: %.1f", result)
+
+	return result
+}
+
 // === delta(Matrix parser.ValueTypeMatrix) Vector ===
 func funcDelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extrapolatedRate(vals, args, enh, false, false)
@@ -367,6 +412,31 @@ func funcXrate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelpe
 	return extendedRate0(vals, args, enh, true)
 }
 
+// Extracts points, rangeStartMsec, rangeEndMsec, rangeSeconds from common params.
+// Note: the range is [rangeStartMsec, rangeEndMsec). That is, every sample in range is
+// rangeStartMsec <= sample.T < rangeEndMsec
+func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) ([]Point, int64, int64, float64) {
+	ms := args[0].(*parser.MatrixSelector)
+	vs := ms.VectorSelector.(*parser.VectorSelector)
+
+	rangeStartMsec := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
+	rangeEndMsec := enh.Ts - durationMilliseconds(vs.Offset)
+
+	points := vals[0].(Matrix)[0].Points
+
+	// TODO: Is rangeSeconds == (rangeEndMsec - rangeStartMsec)/1000.0? If so, let's drop it. -Colin
+	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
+}
+
+// === yrate(node parser.ValueTypeMatrix) Vector ===
+func funcYrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, rangeSeconds := rangeFromSelectors(vals, args, enh)
+
+	result := yIncrease(points, rangeStartMsec, rangeEndMsec) / rangeSeconds
+
+	return append(enh.Out, Sample{Point: Point{V: result}})
+}
+
 // === xincrease(node parser.ValueTypeMatrix) Vector ===
 func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extendedRate(vals, args, enh, true, false)
@@ -375,6 +445,15 @@ func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 // === xincrease0(node parser.ValueTypeMatrix) Vector ===
 func funcXincrease0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extendedRate0(vals, args, enh, false)
+}
+
+// === yincrease(node parser.ValueTypeMatrix) Vector ===
+func funcYincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+
+	result := yIncrease(points, rangeStartMsec, rangeEndMsec)
+
+	return append(enh.Out, Sample{Point: Point{V: result}})
 }
 
 // === irate(node parser.ValueTypeMatrix) Vector ===
@@ -1371,6 +1450,8 @@ var FunctionCalls = map[string]FunctionCall{
 	"xrate":              funcXrate,
 	"xrate0":             funcXrate0,
 	"year":               funcYear,
+	"yincrease":          funcYincrease,
+	"yrate":              funcYrate,
 }
 
 // AtModifierUnsafeFunctions are the functions whose result
