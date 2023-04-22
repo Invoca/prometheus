@@ -203,29 +203,6 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	})
 }
 
-// Infers the scrape interval in msec by taking the median interval among the first 25.
-// By using the median, we avoid the highs (late or missed scrape) and the lows
-// (where a late scrape caused the next to be too close).
-func inferScrapeInterval(points []Point) int64 {
-	if len(points) == 0 {
-		panic(errors.Errorf("no points to work on"))
-	}
-
-	// Compute up to 25 time intervals and store them in intervalArray.
-	var intervalArray [25]int64
-	var i int
-	for i = 0; i < (len(points)-1) && i < len(intervalArray); i++ {
-		intervalArray[i] = points[i+1].T - points[i].T
-	}
-
-	// Slice and sort the intervals (may be fewer than 25, if points was shorter than 26).
-	intervals := intervalArray[:i]
-	sort.Slice(intervals, func(i0, i1 int) bool { return intervals[i0] < intervals[i1] })
-
-	// Return the median interval.
-	return intervals[len(intervals)/2]
-}
-
 const elideSamplesAfter int = 10
 
 func debugSampleString(points []Point) string {
@@ -246,12 +223,11 @@ func debugSampleString(points []Point) string {
 }
 
 // yIncrease is a utility function for yrate/yincrease.
-// It calculates the increase of the range (allowing for counter resets and including the startup value from 0.0),
+// It calculates the increase of the range (allowing for counter resets and inferring the fresh start value of 0.0),
 // taking into account the last sample before the range start.
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
-	// Debug logging
-	log.Printf("yincrease: range: %.3f...%.3f", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
-	log.Println("yincrease: samples: ", debugSampleString(points))
+	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
+	log.Println("yIncrease: samples: ", debugSampleString(points))
 
 	lastBeforeRange := float64(0.0) // This provides the 0 fix for a fresh start of a pod.
 	lastInRange := float64(0.0)
@@ -267,7 +243,7 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
 		}
 		if point.T < rangeEndMsec {
 			lastInRange = point.V
-			if point.T >= rangeStartMsec && point.V < lastValue { // Counter can only go backwards on a restart.
+			if point.T >= rangeStartMsec && point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart
 				inRangeRestartSkew += point.V
 			}
 		}
@@ -276,7 +252,7 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
 
 	result := lastInRange - lastBeforeRange + inRangeRestartSkew
 
-	log.Printf("yincrease: returning result: %.1f", result)
+	log.Printf("yIncrease: returning result: %.1f\n", result)
 
 	return result
 }
@@ -323,7 +299,6 @@ func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalN
 
 	points := vals[0].(Matrix)[0].Points
 
-	// TODO: Is rangeSeconds == (rangeEndMsec - rangeStartMsec)/1000.0? If so, let's drop the separate return value. -Colin
 	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
 }
 
