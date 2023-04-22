@@ -1319,6 +1319,7 @@ var FunctionCalls = map[string]FunctionCall{
 	"xincrease":          funcXincrease,
 	"xrate":              funcXrate,
 	"year":               funcYear,
+	"ydelta":             funcYincrease,
 	"yincrease":          funcYincrease,
 	"yrate":              funcYrate,
 }
