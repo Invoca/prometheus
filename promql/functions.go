@@ -222,9 +222,16 @@ func debugSampleString(points []Point) string {
 	return buffer.String()
 }
 
-// yIncrease is a utility function for yrate/yincrease.
-// It calculates the increase of the range (allowing for counter resets and inferring the fresh start value of 0.0),
-// taking into account the last sample before the range start.
+// yIncrease is a utility function for yincrease/yrate/ydelta.
+// It calculates the increase of the range (allowing for counter resets),
+// taking into account the last sample before rangeStartMsec.
+// It returns the result across the range [rangeStartMsec, rangeEndMsec)
+// It always extends the preceding sample's value until the next sample, including the
+// unwritten origin sample value at the start of every time series.
+//
+// It is a linear function, meaning that for adjacent periods p0 and p1
+// ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
+//   yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
 	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
 	log.Println("yIncrease: samples: ", debugSampleString(points))
@@ -243,7 +250,7 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
 		}
 		if point.T < rangeEndMsec {
 			lastInRange = point.V
-			if point.T >= rangeStartMsec && point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart
+			if point.T >= rangeStartMsec && point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
 				inRangeRestartSkew += point.V
 			}
 		}
