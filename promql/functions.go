@@ -228,115 +228,6 @@ func inferScrapeInterval(points []Point) int64 {
 
 const elideSamplesAfter int = 10
 
-// extendedRate0 is a utility function for xrate0/xincrease0.
-// It calculates the rate (allowing for counter resets and including the startup value from 0),
-// taking into account the last sample before the range start, and returns
-// the result as either per-second (if isRate is true) or overall.
-func extendedRate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper, isRate bool) Vector {
-	ms := args[0].(*parser.MatrixSelector)
-	vs := ms.VectorSelector.(*parser.VectorSelector)
-
-	rangeStartMsec := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
-	rangeEndMsec := enh.Ts - durationMilliseconds(vs.Offset)
-
-	samples := vals[0].(Matrix)[0]
-	points := samples.Points
-
-	// Cannot compute rate with 0 or 1 data points.
-	if len(points) < 2 {
-		return enh.Out
-	}
-
-	scrapeIntervalMsec := inferScrapeInterval(points) //** milliseconds
-
-	firstPoint := 0
-	var lastValue float64
-
-	// The 0 Fix: Check for fresh pod start case where we have no point before the range,
-	// meaning the caller failed to find any before the range in the lookback interval.
-	// Treat this as if we had a 0 to start.
-	firstPointToRangeStartMsec := rangeStartMsec - points[0].T
-	if firstPointToRangeStartMsec < 0 {
-		lastValue = 0.0 // include points[0].V in resultValue
-	} else {
-		// If the point before the range is too far from rangeStart, drop it.
-		if firstPointToRangeStartMsec > scrapeIntervalMsec { //** There's 0 slop here, so we could drop the point even if it was scraped 1 msec early
-			firstPoint = 1
-		}
-		lastValue = points[firstPoint].V
-	}
-
-	// Cannot compute rate with 0 or 1 data points.
-	if len(points)-firstPoint < 2 {
-		return enh.Out
-	}
-
-	// Simplest result: the difference beteween first and last values.
-	resultValue := points[len(points)-1].V - lastValue
-
-	// Debug logging
-	log.Printf("extendedRate0: isRate: %t, firstPoint: %d, scrapeIntervalMsec: %.1f", isRate, firstPoint, float64(scrapeIntervalMsec)/1000.0)
-	log.Printf("extendedRate0: enh range: %.3f...%.3f (offset %.3f); starting result: %.1f; lastValue: %.1f",
-		float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0, float64(vs.Offset)/1000.0, resultValue, lastValue)
-
-	{
-		buffer := new(bytes.Buffer)
-		for i, point := range points {
-			if i == elideSamplesAfter && len(points)-1 > elideSamplesAfter {
-				fmt.Fprintf(buffer, "...")
-			} else if i > elideSamplesAfter && len(points)-i > elideSamplesAfter {
-				continue
-			} else {
-				if i > 0 {
-					fmt.Fprintf(buffer, ", ")
-				}
-				fmt.Fprintf(buffer, "[%.3f,%.1f]", float64(point.T)/1000.0, point.V)
-			}
-		}
-		log.Println("extendedRate0: samples:", buffer.String())
-	}
-
-	// Correct for any case where a process restart caused the increase to turn negative.
-	for _, point := range points[firstPoint:] {
-		step := point.V - lastValue
-		if step < 0 {
-			resultValue += -step
-			log.Printf("extendedRate0: correcting for step: %.1f", step)
-		}
-		lastValue = point.V
-	}
-
-	// If the first or last sampled point is outside the range boundaries +/-, assume we are missing a sample at
-	// that edge and extrapolate from the sampled range up to the requested range.
-	{
-		sampledStartMsec := points[firstPoint].T
-		sampledEndMsec := points[len(points)-1].T
-		if int64(math.Abs(float64(rangeStartMsec-sampledStartMsec))) < scrapeIntervalMsec ||
-			firstPointToRangeStartMsec < 0 {
-			sampledStartMsec = rangeStartMsec // Close enough, so snap to start
-		}
-		if int64(math.Abs(float64(rangeEndMsec-sampledEndMsec))) < scrapeIntervalMsec {
-			sampledEndMsec = rangeEndMsec // Close enough, so snap to end
-		}
-		if sampledStartMsec != rangeStartMsec || sampledEndMsec != rangeEndMsec {
-			sampledRangeMsec := sampledEndMsec - sampledStartMsec
-			requestedRangeMsec := durationMilliseconds(ms.Range)
-			log.Printf("extendedRate0: sampled{Start,End}tMsec: %d:%d scaling result: %.1f by %d / %d", sampledStartMsec, sampledEndMsec, resultValue, requestedRangeMsec, sampledRangeMsec)
-			resultValue *= (float64(requestedRangeMsec) / float64(sampledRangeMsec))
-		}
-	}
-
-	if isRate {
-		resultValue /= ms.Range.Seconds()
-	}
-
-	log.Printf("extendedRate0: returning result: %.1f", resultValue)
-
-	return append(enh.Out, Sample{
-		Point: Point{V: resultValue},
-	})
-}
-
 func debugSampleString(points []Point) string {
 	buffer := new(bytes.Buffer)
 	for i, point := range points {
@@ -415,19 +306,9 @@ func funcXrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper
 	return extendedRate(vals, args, enh, true, true)
 }
 
-// === xrate0(node parser.ValueTypeMatrix) Vector ===
-func funcXrate0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
-	return extendedRate0(vals, args, enh, true)
-}
-
 // === xincrease(node parser.ValueTypeMatrix) Vector ===
 func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extendedRate(vals, args, enh, true, false)
-}
-
-// === xincrease0(node parser.ValueTypeMatrix) Vector ===
-func funcXincrease0(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
-	return extendedRate0(vals, args, enh, false)
 }
 
 // Extracts points, rangeStartMsec, rangeEndMsec, rangeSeconds from common params.
@@ -1454,9 +1335,7 @@ var FunctionCalls = map[string]FunctionCall{
 	"vector":             funcVector,
 	"xdelta":             funcXdelta,
 	"xincrease":          funcXincrease,
-	"xincrease0":         funcXincrease0,
 	"xrate":              funcXrate,
-	"xrate0":             funcXrate0,
 	"year":               funcYear,
 	"yincrease":          funcYincrease,
 	"yrate":              funcYrate,
