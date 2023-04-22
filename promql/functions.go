@@ -1341,9 +1341,10 @@ var AtModifierUnsafeFunctions = map[string]struct{}{
 
 func init() {
 	// REPLACE_RATE_FUNCS replaces the default rate extrapolation functions
-	// with xrate functions. This allows for a drop-in replacement and Grafana
+	// with xrate or yrate functions. This allows for a drop-in replacement and Grafana
 	// auto-completion, Prometheus tooling, Thanos, etc. should still work as expected.
-	if os.Getenv("REPLACE_RATE_FUNCS") == "1" {
+	switch os.Getenv("REPLACE_RATE_FUNCS") {
+	case "1":
 		FunctionCalls["delta"] = FunctionCalls["xdelta"]
 		FunctionCalls["increase"] = FunctionCalls["xincrease"]
 		FunctionCalls["rate"] = FunctionCalls["xrate"]
@@ -1361,6 +1362,19 @@ func init() {
 		delete(parser.Functions, "xincrease")
 		delete(parser.Functions, "xrate")
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
+	case "2":
+		FunctionCalls["delta"] = FunctionCalls["ydelta"]
+		parser.Functions["delta"] = parser.Functions["ydelta"]
+		parser.Functions["delta"].Name = "delta"
+
+		FunctionCalls["increase"] = FunctionCalls["yincrease"]
+		parser.Functions["increase"] = parser.Functions["yincrease"]
+		parser.Functions["increase"].Name = "increase"
+
+		FunctionCalls["rate"] = FunctionCalls["yrate"]
+		parser.Functions["rate"] = parser.Functions["yrate"]
+		parser.Functions["rate"].Name = "rate"
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well).")
 	}
 }
 
