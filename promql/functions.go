@@ -224,7 +224,7 @@ func debugSampleString(points []Point) string {
 
 // yIncrease is a utility function for yincrease/yrate/ydelta.
 // It calculates the increase of the range (allowing for counter resets),
-// taking into account the last sample before rangeStartMsec.
+// taking into account the sample at the end of the previous range (just before rangeStartMsec).
 // It returns the result across the range [rangeStartMsec, rangeEndMsec)
 // It always extends the preceding sample's value until the next sample, including the
 // unwritten origin sample value at the start of every time series.
@@ -232,11 +232,14 @@ func debugSampleString(points []Point) string {
 // It is a linear function, meaning that for adjacent periods p0 and p1
 // ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
 //   yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
-func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
+func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
 	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
 	log.Println("yIncrease: samples: ", debugSampleString(points))
 
-	lastBeforeRange := float64(0.0) // This provides the 0 fix for a fresh start of a pod.
+	lastBeforeRange := float64(0.0) // This provides the 0 counter fix for a fresh start of a pod.
+	if !isCounter && len(points) > 0 {
+		lastBeforeRange = points[0].V // Gauges don't start at 0.
+	}
 	lastInRange := float64(0.0)
 
 	lastValue := float64(0.0)
@@ -250,7 +253,9 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64) float64 {
 		}
 		if point.T < rangeEndMsec {
 			lastInRange = point.V
-			if point.T >= rangeStartMsec && point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
+			if isCounter &&
+				point.T >= rangeStartMsec &&
+				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
 				inRangeRestartSkew += point.V
 			}
 		}
@@ -309,11 +314,20 @@ func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalN
 	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
 }
 
+// === ydelta(node parser.ValueTypeMatrix) Vector ===
+func funcYdelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false)
+
+	return append(enh.Out, Sample{Point: Point{V: value}})
+}
+
 // === yincrease(node parser.ValueTypeMatrix) Vector ===
 func funcYincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
 
-	value := yIncrease(points, rangeStartMsec, rangeEndMsec)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true)
 
 	return append(enh.Out, Sample{Point: Point{V: value}})
 }
@@ -322,7 +336,7 @@ func funcYincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 func funcYrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	points, rangeStartMsec, rangeEndMsec, rangeSeconds := rangeFromSelectors(vals, args, enh)
 
-	value := yIncrease(points, rangeStartMsec, rangeEndMsec) / rangeSeconds
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true) / rangeSeconds
 
 	return append(enh.Out, Sample{Point: Point{V: value}})
 }
@@ -1319,7 +1333,7 @@ var FunctionCalls = map[string]FunctionCall{
 	"xincrease":          funcXincrease,
 	"xrate":              funcXrate,
 	"year":               funcYear,
-	"ydelta":             funcYincrease,
+	"ydelta":             funcYdelta,
 	"yincrease":          funcYincrease,
 	"yrate":              funcYrate,
 }
