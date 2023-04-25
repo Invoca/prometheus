@@ -248,16 +248,17 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 	// The points are in time order, so we can just walk the list once and remember the last values
 	// seen "before" and "in" range. If there are no values in range, we use the last value before range.
 	for _, point := range points {
-		if point.T < rangeStartMsec {
-			lastBeforeRange = point.V
+		if point.T >= rangeEndMsec { // Only consider points in [rangeStartMsec, rangeEndMsec).
+			break
 		}
-		if point.T < rangeEndMsec {
-			lastInRange = point.V
+		lastInRange = point.V
+		if point.T >= rangeStartMsec {
 			if isCounter &&
-				point.T >= rangeStartMsec &&
 				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
 				inRangeRestartSkew += point.V
 			}
+		} else {
+			lastBeforeRange = point.V
 		}
 		lastValue = point.V
 	}
