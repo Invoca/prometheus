@@ -248,33 +248,33 @@ clear
 
 # Tests for increase()/xincrease()/xrate()/yincrease()/yrate().
 load 5s
-	http_requests{path="/foo"}	1001 1011 1021 1031 1041 1051 1061 1071 1081 1091 1101
-	http_requests{path="/bar"}	2001 2011 2021 2031 2041 2051 2001 2011 2021 2031 2041
+	http_requests{path="/foo"}	1000+10x10
+	http_requests{path="/bar"}	2000+10x5 2000+10x4
 
 # Tests for increase().
 eval instant at 50s increase(http_requests[50s])
 	{path="/foo"} 100
-	{path="/bar"} 2312.222222222222
+	{path="/bar"} 2311.1111111111113
 
 eval instant at 50s xincrease(http_requests[50s])
 	{path="/foo"} 90
-	{path="/bar"} 2081
+	{path="/bar"} 2080
 
 eval instant at 50s yincrease(http_requests[50s])
-	{path="/foo"} 1091
-	{path="/bar"} 4032
+	{path="/foo"} 1090
+	{path="/bar"} 4030
 
 eval instant at 50s increase(http_requests[100s])
 	{path="/foo"} 104.358
-	{path="/bar"} 2412.9888666666666
+	{path="/bar"} 2411.829333333333
 
 eval instant at 50s xincrease(http_requests[100s])
 	{path="/foo"} 90
-	{path="/bar"} 2081
+	{path="/bar"} 2080
 
 eval instant at 50s yincrease(http_requests[100s])
-	{path="/foo"} 1091
-	{path="/bar"} 4032
+	{path="/foo"} 1090
+	{path="/bar"} 4030
 
 # eval instant at 50s increase(http_requests[5s])
 # 	{path="/foo"} 10
@@ -301,19 +301,19 @@ eval instant at 49s xincrease(http_requests[3s])
 # Tests for xrate().
 eval instant at 50s xrate(http_requests[50s])
 	{path="/foo"} 1.8
-	{path="/bar"} 41.62
+	{path="/bar"} 41.6
 
 eval instant at 50s yrate(http_requests[50s])
-	{path="/foo"} 21.82
-	{path="/bar"} 80.64
+	{path="/foo"} 21.8
+	{path="/bar"} 80.6
 
 eval instant at 50s xrate(http_requests[100s])
 	{path="/foo"} 0.9
-	{path="/bar"} 20.81
+	{path="/bar"} 20.8
 
 eval instant at 50s yrate(http_requests[100s])
-	{path="/foo"} 10.91
-	{path="/bar"} 40.32
+	{path="/foo"} 10.9
+	{path="/bar"} 40.3
 
 eval instant at 50s xrate(http_requests[5s])
 	{path="/foo"} 2
@@ -341,19 +341,19 @@ clear
 
 # Test for increase()/xincrease()/yincrease() with counter reset.
 # When the counter is reset, it always starts at 0.
-# So the sequence 1004 1003 (decreasing counter = reset) is interpreted the same as 1004 1001 1002 1003.
+# So the sequence 1003 1002 (decreasing counter = reset) is interpreted the same as 1003 1000 1001 1002.
 # Prometheus assumes it missed the intermediate values 1000 and 1001.
 load 5m
-	http_requests{path="/foo"}	1001 1002 1003 1004 1003 1004 1005
+	http_requests{path="/foo"}	1000 1001 1002 1003 1002 1003 1004
 
 eval instant at 30m increase(http_requests[30m])
-	{path="/foo"} 1208.3999999999999
+	{path="/foo"} 1207.2
 
 eval instant at 30m xincrease(http_requests[30m])
-	{path="/foo"} 1007
+	{path="/foo"} 1006
 
 eval instant at 30m yincrease(http_requests[30m])
-	{path="/foo"} 2007
+	{path="/foo"} 2005
 
 clear
 
@@ -433,8 +433,8 @@ clear
 
 # Tests for delta()/xdelta()/ydelta().
 load 5m
-	http_requests{path="/foo"}	1001 1051 1301 1151 1201
-	http_requests{path="/bar"}	2201 2151 2301 2051 2001
+	http_requests{path="/foo"}	1000 1050 1300 1150 1200
+	http_requests{path="/bar"}	2200 2150 2300 2050 2000
 
 eval instant at 20m delta(http_requests[20m])
 	{path="/foo"} 200
