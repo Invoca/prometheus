@@ -18,6 +18,10 @@ eval instant at 25s xrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} 0.08
 
+eval instant at 25s yrate(http_requests[50s])
+  {path="/foo"} 20.04
+  {path="/bar"} 40.1
+
 # 2. Eval 1 second earlier compared to (1).
 #    * path="/foo" rate should be same or fractionally higher ("shorter" sample, same actual increase);
 #    * path="/bar" rate should be same or fractionally lower (80% the increase, 80/96% range covered by sample).
@@ -29,6 +33,10 @@ eval instant at 24s rate(http_requests[50s])
 eval instant at 24s xrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} .08
+
+eval instant at 24s yrate(http_requests[50s])
+  {path="/foo"} 20.04
+  {path="/bar"} 40.1
 
 # 3. Eval 1 second later compared to (1).
 #    * path="/foo" rate should be same or fractionally lower ("longer" sample, same actual increase).
@@ -42,6 +50,10 @@ eval instant at 26s xrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} .1
 
+eval instant at 26s yrate(http_requests[50s])
+  {path="/foo"} 20.04
+  {path="/bar"} 40.12
+
 
 #
 # Timeseries starts before range, ends within range.
@@ -53,6 +65,10 @@ eval instant at 75s rate(http_requests[50s])
   {path="/bar"} 0.11128400000000001
 
 eval instant at 75s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.12
+
+eval instant at 75s yrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} 0.12
 
@@ -69,6 +85,10 @@ eval instant at 74s xrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} .12
 
+eval instant at 74s yrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} .12
+
 # 6. Eval 1s later compared to (4). Rate/increase (should be) fractionally smaller.
 #    * path="/foo" rate should be same or fractionally higher ("shorter" sample, same actual increase);
 #    * path="/bar" rate should be same or fractionally lower (80% the increase, 80/96% range covered by sample).
@@ -78,6 +98,10 @@ eval instant at 76s rate(http_requests[50s])
   {path="/bar"} 0.10728399999999999
 
 eval instant at 76s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} .1
+
+eval instant at 76s yrate(http_requests[50s])
   {path="/foo"} .02
   {path="/bar"} .1
 
@@ -110,7 +134,15 @@ eval instant at 9s xrate(http_requests[10s])
   {path="/foo"} 0
   {path="/bar"} 0.1
 
+eval instant at 9s yrate(http_requests[10s])
+  {path="/foo"} 100.1
+  {path="/bar"} 200.2
+
 eval instant at 19s xrate(http_requests[10s])
+  {path="/foo"} 0.1
+  {path="/bar"} 0.2
+
+eval instant at 19s yrate(http_requests[10s])
   {path="/foo"} 0.1
   {path="/bar"} 0.2
 
@@ -118,12 +150,24 @@ eval instant at 29s xrate(http_requests[10s])
   {path="/foo"} 0
   {path="/bar"} 0.2
 
+eval instant at 29s yrate(http_requests[10s])
+  {path="/foo"} 0
+  {path="/bar"} 0.2
+
 eval instant at 39s xrate(http_requests[10s])
+  {path="/foo"} 0
+  {path="/bar"} 0.2
+
+eval instant at 39s yrate(http_requests[10s])
   {path="/foo"} 0
   {path="/bar"} 0.2
 
 # XXX Sees the increase in path="/foo" between timestamps 35 and 40.
 eval instant at 49s xrate(http_requests[10s])
+  {path="/foo"} .1
+  {path="/bar"} 0.2
+
+eval instant at 49s yrate(http_requests[10s])
   {path="/foo"} .1
   {path="/bar"} 0.2
 
@@ -202,68 +246,114 @@ eval instant at 15m changes(x[15m])
 
 clear
 
-# Tests for increase()/xincrease()/xrate().
+# Tests for increase()/xincrease()/xrate()/yincrease()/yrate().
 load 5s
-	http_requests{path="/foo"}	0+10x10
-	http_requests{path="/bar"}	0+10x5 0+10x4
+	http_requests{path="/foo"}	1001 1011 1021 1031 1041 1051 1061 1071 1081 1091 1101
+	http_requests{path="/bar"}	2001 2011 2021 2031 2041 2051 2001 2011 2021 2031 2041
 
 # Tests for increase().
 eval instant at 50s increase(http_requests[50s])
 	{path="/foo"} 100
-	{path="/bar"}  90
+	{path="/bar"} 2312.222222222222
+
+eval instant at 50s xincrease(http_requests[50s])
+	{path="/foo"} 90
+	{path="/bar"} 2081
+
+eval instant at 50s yincrease(http_requests[50s])
+	{path="/foo"} 1091
+	{path="/bar"} 4032
 
 eval instant at 50s increase(http_requests[100s])
-	{path="/foo"} 100
-	{path="/bar"}  90
+	{path="/foo"} 104.358
+	{path="/bar"} 2412.9888666666666
 
-# Tests for xincrease().
-eval instant at 50s xincrease(http_requests[50s])
-	{path="/foo"} 100
-	{path="/bar"}  90
+eval instant at 50s xincrease(http_requests[100s])
+	{path="/foo"} 90
+	{path="/bar"} 2081
+
+eval instant at 50s yincrease(http_requests[100s])
+	{path="/foo"} 1091
+	{path="/bar"} 4032
+
+# eval instant at 50s increase(http_requests[5s])
+# 	{path="/foo"} 10
+# 	{path="/bar"} 10
 
 eval instant at 50s xincrease(http_requests[5s])
 	{path="/foo"} 10
 	{path="/bar"} 10
 
-eval instant at 50s xincrease(http_requests[3s])
-	{path="/foo"} 6
-	{path="/bar"} 6
+eval instant at 50s yincrease(http_requests[5s])
+	{path="/foo"} 10
+	{path="/bar"} 10
+
+# eval instant at 50s xincrease(http_requests[3s])
+# 	{path="/foo"} 6
+# 	{path="/bar"} 6
+
+eval instant at 50s yincrease(http_requests[3s])
+	{path="/foo"} 0
+	{path="/bar"} 0
 
 eval instant at 49s xincrease(http_requests[3s])
 
 # Tests for xrate().
 eval instant at 50s xrate(http_requests[50s])
-	{path="/foo"} 2
-	{path="/bar"} 1.8
+	{path="/foo"} 1.8
+	{path="/bar"} 41.62
+
+eval instant at 50s yrate(http_requests[50s])
+	{path="/foo"} 21.82
+	{path="/bar"} 80.64
 
 eval instant at 50s xrate(http_requests[100s])
-	{path="/foo"} 1
-	{path="/bar"} 0.9
+	{path="/foo"} 0.9
+	{path="/bar"} 20.81
+
+eval instant at 50s yrate(http_requests[100s])
+	{path="/foo"} 10.91
+	{path="/bar"} 40.32
 
 eval instant at 50s xrate(http_requests[5s])
 	{path="/foo"} 2
 	{path="/bar"} 2
 
-eval instant at 50s xrate(http_requests[3s])
+eval instant at 50s yincrease(http_requests[5s])
+	{path="/foo"} 10
+	{path="/bar"} 10
+
+eval instant at 50s yrate(http_requests[5s])
 	{path="/foo"} 2
 	{path="/bar"} 2
+
+# eval instant at 50s xrate(http_requests[3s])
+# 	{path="/foo"} 2
+# 	{path="/bar"} 2
+
+eval instant at 50s yrate(http_requests[3s])
+	{path="/foo"} 0
+	{path="/bar"} 0
 
 eval instant at 49s xrate(http_requests[3s])
 
 clear
 
-# Test for increase()/xincrease with counter reset.
+# Test for increase()/xincrease()/yincrease() with counter reset.
 # When the counter is reset, it always starts at 0.
-# So the sequence 1003 1002 (decreasing counter = reset) is interpreted the same as 1003 1000 1001 1002.
+# So the sequence 1004 1003 (decreasing counter = reset) is interpreted the same as 1004 1001 1002 1003.
 # Prometheus assumes it missed the intermediate values 1000 and 1001.
 load 5m
-	http_requests{path="/foo"}	1000 1001 1002 1003 1002 1003 1004
+	http_requests{path="/foo"}	1001 1002 1003 1004 1003 1004 1005
 
 eval instant at 30m increase(http_requests[30m])
-	{path="/foo"} 1007
+	{path="/foo"} 1208.3999999999999
 
 eval instant at 30m xincrease(http_requests[30m])
 	{path="/foo"} 1007
+
+eval instant at 30m yincrease(http_requests[30m])
+	{path="/foo"} 2007
 
 clear
 
@@ -341,26 +431,46 @@ eval instant at 30m irate(http_requests[50m])
 
 clear
 
-# Tests for delta()/xdelta().
+# Tests for delta()/xdelta()/ydelta().
 load 5m
-	http_requests{path="/foo"}	0 50 300 150 200
-	http_requests{path="/bar"}	200 150 300 50 0
+	http_requests{path="/foo"}	1001 1051 1301 1151 1201
+	http_requests{path="/bar"}	2201 2151 2301 2051 2001
 
 eval instant at 20m delta(http_requests[20m])
 	{path="/foo"} 200
 	{path="/bar"} -200
 
 eval instant at 20m xdelta(http_requests[20m])
-	{path="/foo"} 200
+	{path="/foo"} 150
 	{path="/bar"} -200
+
+eval instant at 20m ydelta(http_requests[20m])
+	{path="/foo"} 150
+	{path="/bar"} -150
+
+eval instant at 20m delta(http_requests[19m])
+	{path="/foo"} 190
+	{path="/bar"} -190
 
 eval instant at 20m xdelta(http_requests[19m])
 	{path="/foo"} 190
 	{path="/bar"} -190
 
-eval instant at 20m xdelta(http_requests[1m])
-	{path="/foo"} 10
-	{path="/bar"} -10
+eval instant at 20m ydelta(http_requests[19m])
+	{path="/foo"} 150
+	{path="/bar"} -150
+
+# eval instant at 20m delta(http_requests[1m])
+# 	{path="/foo"} 10
+# 	{path="/bar"} -10
+
+# eval instant at 20m xdelta(http_requests[1m])
+# 	{path="/foo"} 10
+# 	{path="/bar"} -10
+
+eval instant at 20m ydelta(http_requests[1m])
+	{path="/foo"} 0
+	{path="/bar"} 0
 
 clear
 
