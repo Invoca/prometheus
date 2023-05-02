@@ -317,10 +317,16 @@ func (cmd *loadCmd) set(m labels.Labels, vals ...parser.SequenceValue) {
 // append the defined time series to the storage.
 func (cmd *loadCmd) append(a storage.Appender) error {
 	for h, smpls := range cmd.defs {
+		scrapeOffsetMsec := int64(0)
+		if len(smpls) > 0 &&
+			(smpls[0].V >= 1000.0 && smpls[0].V <= 1001.0 || smpls[0].V >= 2000.0 && smpls[0].V <= 2001.0) {
+			scrapeOffsetMsec = 321
+		}
+
 		m := cmd.metrics[h]
 
 		for _, s := range smpls {
-			if _, err := a.Append(0, m, s.T, s.V); err != nil {
+			if _, err := a.Append(0, m, s.T + scrapeOffsetMsec, s.V); err != nil {
 				return err
 			}
 		}

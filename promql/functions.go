@@ -14,7 +14,9 @@
 package promql
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"sort"
@@ -158,23 +160,19 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	firstPoint := 0
 	// If the point before the range is too far from rangeStart, drop it.
 	if float64(rangeStart-points[0].T) > averageInterval { //** There's 0 slop here, so we could drop the point even if it was scraped 1 msec early
-		//** Repeating the above check for 0 or 1 data points, with +1. I'm pretty sure these checks could be done just once.
+		//** Repeating the above check for 0 or 1 data points, with +1.
 		if len(points) < 3 {
 			return enh.Out
 		}
 		firstPoint = 1
-		sampledRange = float64(points[len(points)-1].T - points[1].T) //** repeating above code "
-		averageInterval = sampledRange / float64(len(points)-2)       //** repeating above code "
+		sampledRange = float64(points[len(points)-1].T - points[1].T) //** repeating above code
+		averageInterval = sampledRange / float64(len(points)-2)       //** repeating above code
 	}
 
 	counterCorrection := float64(0.0)
 	lastValue := float64(0.0)
 
-	if isCounter { //** isCounter means we were called from rate or increase or delta... which means you can't use those for gauges?
-		//** Here, we can handle the initial start from "null" (no previous data point)
-		//** if first point is near rangeStart, that means there was no earlier data point, which means we probably just started.
-		//** counterCorrection = points[firstPoint].V
-		//** (unless maybe the counterCorrection would be huge compared to the remaining deltas...in which case it might be a missed scrape)
+	if isCounter { //** called from rate or increase (not delta)
 		for i := firstPoint; i < len(points); i++ {
 			sample := points[i]
 			if sample.V < lastValue { //** Handle when the counter steps backwards due to process restart
@@ -193,16 +191,83 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	// the sampled range to the requested range.
 	if points[firstPoint].T <= rangeStart && durationToEnd < averageInterval {
 		adjustToRange := float64(durationMilliseconds(ms.Range))
-		resultValue = resultValue * (adjustToRange / sampledRange)
+		resultValue *= (adjustToRange / sampledRange)
 	}
 
 	if isRate {
-		resultValue = resultValue / ms.Range.Seconds()
+		resultValue /= ms.Range.Seconds()
 	}
 
 	return append(enh.Out, Sample{
 		Point: Point{V: resultValue},
 	})
+}
+
+const elideSamplesAfter int = 10
+
+func debugSampleString(points []Point) string {
+	buffer := new(bytes.Buffer)
+	for i, point := range points {
+		if i == elideSamplesAfter && len(points)-1 > elideSamplesAfter {
+			fmt.Fprintf(buffer, "...")
+		} else if i > elideSamplesAfter && len(points)-i > elideSamplesAfter {
+			continue
+		} else {
+			if i > 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "[%.3f,%.1f]", float64(point.T)/1000.0, point.V)
+		}
+	}
+	return buffer.String()
+}
+
+// yIncrease is a utility function for yincrease/yrate/ydelta.
+// It calculates the increase of the range (allowing for counter resets),
+// taking into account the sample at the end of the previous range (just before rangeStartMsec).
+// It returns the result across the range [rangeStartMsec, rangeEndMsec)
+// It always extends the preceding sample's value until the next sample, including the
+// unwritten origin sample value at the start of every time series.
+//
+// It is a linear function, meaning that for adjacent periods p0 and p1
+// ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
+//   yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
+func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
+	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
+	log.Println("yIncrease: samples: ", debugSampleString(points))
+
+	lastBeforeRange := float64(0.0) // This provides the 0 counter fix for a fresh start of a pod.
+	if !isCounter && len(points) > 0 {
+		lastBeforeRange = points[0].V // Gauges don't start at 0.
+	}
+	lastInRange := float64(0.0)
+
+	lastValue := float64(0.0)
+	inRangeRestartSkew := float64(0.0)
+
+	// The points are in time order, so we can just walk the list once and remember the last values
+	// seen "before" and "in" range. If there are no values in range, we use the last value before range.
+	for _, point := range points {
+		if point.T >= rangeEndMsec { // Only consider points in [rangeStartMsec, rangeEndMsec).
+			break
+		}
+		lastInRange = point.V
+		if point.T >= rangeStartMsec {
+			if isCounter &&
+				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
+				inRangeRestartSkew += point.V
+			}
+		} else {
+			lastBeforeRange = point.V
+		}
+		lastValue = point.V
+	}
+
+	result := lastInRange - lastBeforeRange + inRangeRestartSkew
+
+	log.Printf("yIncrease: returning result: %.1f\n", result)
+
+	return result
 }
 
 // === delta(Matrix parser.ValueTypeMatrix) Vector ===
@@ -233,6 +298,48 @@ func funcXrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper
 // === xincrease(node parser.ValueTypeMatrix) Vector ===
 func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	return extendedRate(vals, args, enh, true, false)
+}
+
+// Extracts points, rangeStartMsec, rangeEndMsec, rangeSeconds from common params.
+// Note: the range is [rangeStartMsec, rangeEndMsec). That is, every sample in range has the property:
+// rangeStartMsec <= sample.T < rangeEndMsec
+func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) ([]Point, int64, int64, float64) {
+	ms := args[0].(*parser.MatrixSelector)
+	vs := ms.VectorSelector.(*parser.VectorSelector)
+
+	rangeStartMsec := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
+	rangeEndMsec := enh.Ts - durationMilliseconds(vs.Offset)
+
+	points := vals[0].(Matrix)[0].Points
+
+	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
+}
+
+// === ydelta(node parser.ValueTypeMatrix) Vector ===
+func funcYdelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false)
+
+	return append(enh.Out, Sample{Point: Point{V: value}})
+}
+
+// === yincrease(node parser.ValueTypeMatrix) Vector ===
+func funcYincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true)
+
+	return append(enh.Out, Sample{Point: Point{V: value}})
+}
+
+// === yrate(node parser.ValueTypeMatrix) Vector ===
+func funcYrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
+	points, rangeStartMsec, rangeEndMsec, rangeSeconds := rangeFromSelectors(vals, args, enh)
+
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true) / rangeSeconds
+
+	return append(enh.Out, Sample{Point: Point{V: value}})
 }
 
 // === irate(node parser.ValueTypeMatrix) Vector ===
@@ -1227,6 +1334,9 @@ var FunctionCalls = map[string]FunctionCall{
 	"xincrease":          funcXincrease,
 	"xrate":              funcXrate,
 	"year":               funcYear,
+	"ydelta":             funcYdelta,
+	"yincrease":          funcYincrease,
+	"yrate":              funcYrate,
 }
 
 // AtModifierUnsafeFunctions are the functions whose result
@@ -1246,9 +1356,10 @@ var AtModifierUnsafeFunctions = map[string]struct{}{
 
 func init() {
 	// REPLACE_RATE_FUNCS replaces the default rate extrapolation functions
-	// with xrate functions. This allows for a drop-in replacement and Grafana
+	// with xrate or yrate functions. This allows for a drop-in replacement and Grafana
 	// auto-completion, Prometheus tooling, Thanos, etc. should still work as expected.
-	if os.Getenv("REPLACE_RATE_FUNCS") == "1" {
+	switch os.Getenv("REPLACE_RATE_FUNCS") {
+	case "1":
 		FunctionCalls["delta"] = FunctionCalls["xdelta"]
 		FunctionCalls["increase"] = FunctionCalls["xincrease"]
 		FunctionCalls["rate"] = FunctionCalls["xrate"]
@@ -1266,6 +1377,19 @@ func init() {
 		delete(parser.Functions, "xincrease")
 		delete(parser.Functions, "xrate")
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
+	case "2":
+		FunctionCalls["delta"] = FunctionCalls["ydelta"]
+		parser.Functions["delta"] = parser.Functions["ydelta"]
+		parser.Functions["delta"].Name = "delta"
+
+		FunctionCalls["increase"] = FunctionCalls["yincrease"]
+		parser.Functions["increase"] = parser.Functions["yincrease"]
+		parser.Functions["increase"].Name = "increase"
+
+		FunctionCalls["rate"] = FunctionCalls["yrate"]
+		parser.Functions["rate"] = parser.Functions["yrate"]
+		parser.Functions["rate"].Name = "rate"
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well).")
 	}
 }
 
