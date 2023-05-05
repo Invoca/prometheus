@@ -249,32 +249,32 @@ clear
 # Tests for increase()/xincrease()/xrate()/yincrease()/yrate().
 load 5s
 	http_requests{path="/foo"}	1000+10x10
-	http_requests{path="/bar"}	2000+10x5 2000+10x4
+	http_requests{path="/bar"}	2000+10x5 5+10x4
 
 # Tests for increase().
 eval instant at 50s increase(http_requests[50s])
 	{path="/foo"} 100
-	{path="/bar"} 2311.1111111111113
+	{path="/bar"} 94.44444444444444
 
 eval instant at 50s xincrease(http_requests[50s])
 	{path="/foo"} 90
-	{path="/bar"} 2080
+	{path="/bar"} 85
 
 eval instant at 50s yincrease(http_requests[50s])
 	{path="/foo"} 1090
-	{path="/bar"} 4030
+	{path="/bar"} 2085
 
 eval instant at 50s increase(http_requests[100s])
 	{path="/foo"} 104.358
-	{path="/bar"} 2411.829333333333
+	{path="/bar"} 98.56033333333333
 
 eval instant at 50s xincrease(http_requests[100s])
 	{path="/foo"} 90
-	{path="/bar"} 2080
+	{path="/bar"} 85
 
 eval instant at 50s yincrease(http_requests[100s])
 	{path="/foo"} 1090
-	{path="/bar"} 4030
+	{path="/bar"} 2085
 
 # eval instant at 50s increase(http_requests[5s])
 # 	{path="/foo"} 10
@@ -301,19 +301,19 @@ eval instant at 49s xincrease(http_requests[3s])
 # Tests for xrate().
 eval instant at 50s xrate(http_requests[50s])
 	{path="/foo"} 1.8
-	{path="/bar"} 41.6
+	{path="/bar"} 1.7
 
 eval instant at 50s yrate(http_requests[50s])
 	{path="/foo"} 21.8
-	{path="/bar"} 80.6
+	{path="/bar"} 41.7
 
 eval instant at 50s xrate(http_requests[100s])
 	{path="/foo"} 0.9
-	{path="/bar"} 20.8
+	{path="/bar"} 0.85
 
 eval instant at 50s yrate(http_requests[100s])
 	{path="/foo"} 10.9
-	{path="/bar"} 40.3
+	{path="/bar"} 20.85
 
 eval instant at 50s xrate(http_requests[5s])
 	{path="/foo"} 2
@@ -341,19 +341,54 @@ clear
 
 # Test for increase()/xincrease()/yincrease() with counter reset.
 # When the counter is reset, it always starts at 0.
-# So the sequence 1003 1002 (decreasing counter = reset) is interpreted the same as 1003 1000 1001 1002.
-# Prometheus assumes it missed the intermediate values 1000 and 1001.
+# So the sequence 1003 2 (decreasing counter = reset) is interpreted the same as 1003 0 1 2.
+# Prometheus assumes it missed the intermediate values 0 and 1.
 load 5m
-	http_requests{path="/foo"}	1000 1001 1002 1003 1002 1003 1004
+	http_requests{path="/foo"}	1000 1001 1003 1006 4 9 16
 
 eval instant at 30m increase(http_requests[30m])
-	{path="/foo"} 1207.2
+	{path="/foo"} 18
 
 eval instant at 30m xincrease(http_requests[30m])
-	{path="/foo"} 1006
+	{path="/foo"} 15
 
 eval instant at 30m yincrease(http_requests[30m])
-	{path="/foo"} 2005
+	{path="/foo"} 1015
+
+# Test counter reset at the range boundary.
+
+eval instant at 20m xincrease(http_requests[5m])
+	{path="/foo"} 3
+
+eval instant at 20m yincrease(http_requests[5m])
+	{path="/foo"} 3
+
+
+eval instant at 20m increase(http_requests[10m])
+	{path="/foo"} 6
+
+eval instant at 20m xincrease(http_requests[10m])
+	{path="/foo"} 5
+
+eval instant at 20m yincrease(http_requests[10m])
+	{path="/foo"} 5
+
+
+eval instant at 25m xincrease(http_requests[5m])
+	{path="/foo"} 4
+
+eval instant at 25m yincrease(http_requests[5m])
+	{path="/foo"} 4
+
+
+eval instant at 25m increase(http_requests[10m])
+	{path="/foo"} 8
+
+eval instant at 25m xincrease(http_requests[10m])
+	{path="/foo"} 7
+
+eval instant at 25m yincrease(http_requests[10m])
+	{path="/foo"} 7
 
 clear
 
