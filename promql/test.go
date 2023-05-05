@@ -326,7 +326,7 @@ func (cmd *loadCmd) append(a storage.Appender) error {
 		m := cmd.metrics[h]
 
 		for _, s := range smpls {
-			if _, err := a.Append(0, m, s.T + scrapeOffsetMsec, s.V); err != nil {
+			if _, err := a.Append(0, m, s.T+scrapeOffsetMsec, s.V); err != nil {
 				return err
 			}
 		}
