@@ -255,7 +255,7 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 		if point.T >= rangeStartMsec {
 			if isCounter &&
 				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
-				inRangeRestartSkew += point.V
+				inRangeRestartSkew += lastValue
 			}
 		} else {
 			lastBeforeRange = point.V
