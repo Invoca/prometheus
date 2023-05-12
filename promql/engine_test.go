@@ -1560,7 +1560,7 @@ load 1ms
 			start: 50, end: 80, interval: 10,
 			result: Matrix{
 				Series{
-					Points: []Point{{V: 995, T: 50000}, {V: 994, T: 60000}, {V: 993, T: 70000}, {V: 992, T: 80000}},
+					Points: []Point{{V: 996, T: 50000}, {V: 995, T: 60000}, {V: 994, T: 70000}, {V: 993, T: 80000}},
 					Metric: lblstopk3,
 				},
 			},
@@ -1578,7 +1578,7 @@ load 1ms
 			start: 70, end: 100, interval: 10,
 			result: Matrix{
 				Series{
-					Points: []Point{{V: 993, T: 70000}, {V: 992, T: 80000}, {V: 991, T: 90000}, {V: 990, T: 100000}},
+					Points: []Point{{V: 994, T: 70000}, {V: 993, T: 80000}, {V: 992, T: 90000}, {V: 991, T: 100000}},
 					Metric: lblstopk3,
 				},
 			},
@@ -1587,7 +1587,7 @@ load 1ms
 			start: 100, end: 130, interval: 10,
 			result: Matrix{
 				Series{
-					Points: []Point{{V: 990, T: 100000}, {V: 989, T: 110000}, {V: 988, T: 120000}, {V: 987, T: 130000}},
+					Points: []Point{{V: 991, T: 100000}, {V: 990, T: 110000}, {V: 989, T: 120000}, {V: 988, T: 130000}},
 					Metric: lblstopk3,
 				},
 			},
