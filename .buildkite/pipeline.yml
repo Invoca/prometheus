@@ -1,0 +1,20 @@
+---
+# Constants
+IMAGE_NAME: &IMAGE_NAME invocaops/prometheus
+
+# Pipeline Steps
+steps:
+  - label: ":docker: Image Build & Push"
+    timeout_in_minutes: 30
+    env:
+      IMAGE_NAME: *IMAGE_NAME
+    agents:
+      queue: buildkit-daemonless
+      buildkit: true
+      daemonless: true
+    command: >
+      buildctl-daemonless build --output type=image,\"name=\$IMAGE_NAME:$BUILDKITE_COMMIT,\$IMAGE_NAME:\$BUILDKITE_BRANCH_DOCKER_SAFE\",push=true \
+                                --progress plain \
+                                --frontend dockerfile.v0 \
+                                --local context=. \
+                                --local dockerfile=.

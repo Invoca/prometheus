@@ -20,6 +20,7 @@ type Function struct {
 	ArgTypes   []ValueType
 	Variadic   int
 	ReturnType ValueType
+	ExtRange   bool
 }
 
 // Functions is a list of all functions supported by PromQL, including their types.
@@ -363,11 +364,47 @@ var Functions = map[string]*Function{
 		ArgTypes:   []ValueType{ValueTypeScalar},
 		ReturnType: ValueTypeVector,
 	},
+	"xdelta": {
+		Name:       "xdelta",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"xincrease": {
+		Name:       "xincrease",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"xrate": {
+		Name:       "xrate",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
 	"year": {
 		Name:       "year",
 		ArgTypes:   []ValueType{ValueTypeVector},
 		Variadic:   1,
 		ReturnType: ValueTypeVector,
+	},
+	"ydelta": {
+		Name:       "ydelta",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"yincrease": {
+		Name:       "yincrease",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"yrate": {
+		Name:       "yrate",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
 	},
 }
 
