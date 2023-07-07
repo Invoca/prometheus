@@ -1824,8 +1824,8 @@ func (ev *evaluator) matrixSelector(node *parser.MatrixSelector) (Matrix, storag
 // values). Any such points falling before mint are discarded; points that fall
 // into the [mint, maxt] range are retained; only points with later timestamps
 // are populated from the iterator.
-//** mint, maxt are min timestamp and max timestamp for this slice, in milliseconds
-//** TODO: rename them minTs and maxTs
+// ** mint, maxt are min timestamp and max timestamp for this slice, in milliseconds
+// ** TODO: rename them minTs and maxTs
 func (ev *evaluator) matrixIterSlice(it *storage.BufferedSeriesIterator, mint, maxt int64, extRange bool, out []Point) []Point {
 	//** Drop any samples at the front that we don't need.
 	var dropBefore int

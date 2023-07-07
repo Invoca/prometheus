@@ -231,7 +231,8 @@ func debugSampleString(points []Point) string {
 //
 // It is a linear function, meaning that for adjacent periods p0 and p1
 // ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
-//   yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
+//
+//	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
 	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
 	log.Println("yIncrease: samples: ", debugSampleString(points))
@@ -1377,20 +1378,38 @@ func init() {
 		delete(parser.Functions, "xincrease")
 		delete(parser.Functions, "xrate")
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
-	case "2":
-		FunctionCalls["delta"] = FunctionCalls["ydelta"]
-		parser.Functions["delta"] = parser.Functions["ydelta"]
-		parser.Functions["delta"].Name = "delta"
 
-		FunctionCalls["increase"] = FunctionCalls["yincrease"]
-		parser.Functions["increase"] = parser.Functions["yincrease"]
-		parser.Functions["increase"].Name = "increase"
+	case "x", "X":
+		copyParserFunction("delta", "orig_delta")
+		copyParserFunction("increase", "orig_increase")
+		copyParserFunction("rate", "orig_rate")
+		repointFunction("delta", "xdelta", "orig_delta")
+		repointFunction("increase", "xincrease", "orig_increase")
+		repointFunction("rate", "xrate", "orig_rate")
 
-		FunctionCalls["rate"] = FunctionCalls["yrate"]
-		parser.Functions["rate"] = parser.Functions["yrate"]
-		parser.Functions["rate"].Name = "rate"
-		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well).")
+		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta (and left the latter names available as well, and original functions callable as orig_rate/orig_increase/orig_delta).")
+
+	case "2", "y", "Y":
+		copyParserFunction("delta", "orig_delta")
+		copyParserFunction("increase", "orig_increase")
+		copyParserFunction("rate", "orig_rate")
+		repointFunction("delta", "ydelta", "orig_delta")
+		repointFunction("increase", "yincrease", "orig_increase")
+		repointFunction("rate", "yrate", "orig_rate")
+
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well, and original functions callable as orig_rate/orig_increase/orig_delta).")
 	}
+}
+
+func copyParserFunction(from_name, to_name string) {
+	fromFunction := *parser.Functions[from_name]
+	fromFunction.Name = to_name
+	parser.Functions[to_name] = &fromFunction
+}
+
+func repointFunction(name, new_name, orig_name string) {
+	FunctionCalls[orig_name] = FunctionCalls[name]
+	FunctionCalls[name] = FunctionCalls[new_name]
 }
 
 type vectorByValueHeap Vector
