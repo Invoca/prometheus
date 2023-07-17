@@ -1409,15 +1409,15 @@ func init() {
 	}
 }
 
-func copyParserFunction(from_name, to_name string) {
-	fromFunction := *parser.Functions[from_name]
-	fromFunction.Name = to_name
-	parser.Functions[to_name] = &fromFunction
+func copyParserFunction(fromName, toName string) {
+	fromFunction := *parser.Functions[fromName]
+	fromFunction.Name = toName
+	parser.Functions[toName] = &fromFunction
 }
 
-func repointFunction(name, new_name, orig_name string) {
-	FunctionCalls[orig_name] = FunctionCalls[name]
-	FunctionCalls[name] = FunctionCalls[new_name]
+func repointFunction(name, newName, origName string) {
+	FunctionCalls[origName] = FunctionCalls[name]
+	FunctionCalls[name] = FunctionCalls[newName]
 }
 
 type vectorByValueHeap Vector
