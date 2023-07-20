@@ -1398,25 +1398,27 @@ func init() {
 		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta (and left the latter names available as well, and original functions callable as orig_rate/orig_increase/orig_delta).")
 
 	case "2", "y", "Y":
-		copyParserFunction("delta", "orig_delta")
-		copyParserFunction("increase", "orig_increase")
-		copyParserFunction("rate", "orig_rate")
-		repointFunction("delta", "ydelta", "orig_delta")
-		repointFunction("increase", "yincrease", "orig_increase")
-		repointFunction("rate", "yrate", "orig_rate")
+		// copyParserFunction("delta", "orig_delta")
+		// copyParserFunction("increase", "orig_increase")
+		// copyParserFunction("rate", "orig_rate")
+		repointFunction("delta", "ydelta" /*, "orig_delta"*/)
+		repointFunction("increase", "yincrease" /*, "orig_increase" */)
+		repointFunction("rate", "yrate" /*, "orig_rate"*/)
 
-		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well, and original functions callable as orig_rate/orig_increase/orig_delta).")
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well).")
 	}
 }
 
+/*
 func copyParserFunction(fromName, toName string) {
-	fromFunction := *parser.Functions[fromName]
-	fromFunction.Name = toName
-	parser.Functions[toName] = &fromFunction
+	functionCopy := *parser.Functions[fromName]
+	functionCopy.Name = toName
+	parser.Functions[toName] = &functionCopy
 }
+*/
 
-func repointFunction(name, newName, origName string) {
-	FunctionCalls[origName] = FunctionCalls[name]
+func repointFunction(name, newName string /*, origName string */) {
+	// FunctionCalls[origName] = FunctionCalls[name]
 	FunctionCalls[name] = FunctionCalls[newName]
 }
 
