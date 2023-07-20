@@ -1388,12 +1388,12 @@ func init() {
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
 
 	case "x", "X":
-		copyParserFunction("delta", "orig_delta")
-		copyParserFunction("increase", "orig_increase")
-		copyParserFunction("rate", "orig_rate")
-		repointFunction("delta", "xdelta", "orig_delta")
-		repointFunction("increase", "xincrease", "orig_increase")
-		repointFunction("rate", "xrate", "orig_rate")
+		// copyParserFunction("delta", "orig_delta")
+		// copyParserFunction("increase", "orig_increase")
+		// copyParserFunction("rate", "orig_rate")
+		repointFunction("delta", "xdelta" /*, "orig_delta" */)
+		repointFunction("increase", "xincrease" /*, "orig_increase" */)
+		repointFunction("rate", "xrate" /*, "orig_rate" */)
 
 		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta (and left the latter names available as well, and original functions callable as orig_rate/orig_increase/orig_delta).")
 
@@ -1401,9 +1401,9 @@ func init() {
 		// copyParserFunction("delta", "orig_delta")
 		// copyParserFunction("increase", "orig_increase")
 		// copyParserFunction("rate", "orig_rate")
-		repointFunction("delta", "ydelta" /*, "orig_delta"*/)
+		repointFunction("delta", "ydelta" /*, "orig_delta" */)
 		repointFunction("increase", "yincrease" /*, "orig_increase" */)
-		repointFunction("rate", "yrate" /*, "orig_rate"*/)
+		repointFunction("rate", "yrate" /*, "orig_rate" */)
 
 		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the latter names available as well).")
 	}
