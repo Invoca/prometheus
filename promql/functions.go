@@ -1383,6 +1383,9 @@ func init() {
 		// copyParserFunction("delta", "orig_delta")
 		// copyParserFunction("increase", "orig_increase")
 		// copyParserFunction("rate", "orig_rate")
+		repointParserFunctions("delta", "xdelta")
+		repointParserFunctions("increase", "xincrease")
+		repointParserFunctions("rate", "xrate")
 		repointFunction("delta", "xdelta" /*, "orig_delta" */)
 		repointFunction("increase", "xincrease" /*, "orig_increase" */)
 		repointFunction("rate", "xrate" /*, "orig_rate" */)
@@ -1393,6 +1396,9 @@ func init() {
 		// copyParserFunction("delta", "orig_delta")
 		// copyParserFunction("increase", "orig_increase")
 		// copyParserFunction("rate", "orig_rate")
+		repointParserFunctions("delta", "ydelta")
+		repointParserFunctions("increase", "yincrease")
+		repointParserFunctions("rate", "yrate")
 		repointFunction("delta", "ydelta" /*, "orig_delta" */)
 		repointFunction("increase", "yincrease" /*, "orig_increase" */)
 		repointFunction("rate", "yrate" /*, "orig_rate" */)
@@ -1408,6 +1414,11 @@ func copyParserFunction(fromName, toName string) {
 	parser.Functions[toName] = &functionCopy
 }
 */
+
+func repointParserFunctions(name, newName string) {
+	parser.Functions[name] = parser.Functions[newName]
+	parser.Functions[name].Name = newName
+}
 
 func repointFunction(name, newName string /*, origName string */) {
 	// FunctionCalls[origName] = FunctionCalls[name]
