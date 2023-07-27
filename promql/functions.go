@@ -1425,7 +1425,7 @@ func copyParserFunction(fromName, toName string) {
 
 func repointParserFunctions(name, newName string) {
 	parser.Functions[name] = parser.Functions[newName]
-	parser.Functions[name].Name = newName
+	parser.Functions[name].Name = newName // TODO: This line feels redundant since the Name should already be newName. Hoping we can drop it. -Colin
 }
 
 func repointFunction(name, newName string /*, origName string */) {
