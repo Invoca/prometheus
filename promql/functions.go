@@ -16,7 +16,6 @@ package promql
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"sort"
@@ -239,8 +238,9 @@ func debugSampleString(points []Point) string {
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
-	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
-	log.Println("yIncrease: samples: ", debugSampleString(points))
+//  Leaving these log lines here in case we'd like to use them again.
+// 	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
+// 	log.Println("yIncrease: samples: ", debugSampleString(points))
 
 	lastBeforeRange := float64(0.0) // This provides the 0 counter fix for a fresh start of a pod.
 	if !isCounter && len(points) > 0 {
@@ -267,11 +267,10 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 		lastValue = point.V
 	}
 
-	result := lastValue - lastBeforeRange + inRangeRestartSkew
+//  Leaving this log line here in case we'd like to use it again.
+// 	log.Printf("yIncrease: returning result: %.1f\n", result)
 
-	log.Printf("yIncrease: returning result: %.1f\n", result)
-
-	return result
+	return (lastValue - lastBeforeRange + inRangeRestartSkew)
 }
 
 // === delta(Matrix parser.ValueTypeMatrix) Vector ===
