@@ -246,7 +246,6 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 	if !isCounter && len(points) > 0 {
 		lastBeforeRange = points[0].V // Gauges don't start at 0.
 	}
-	lastInRange := float64(0.0)
 
 	lastValue := float64(0.0)
 	inRangeRestartSkew := float64(0.0)
@@ -257,7 +256,6 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 		if point.T >= rangeEndMsec { // Only consider points in [rangeStartMsec, rangeEndMsec).
 			break
 		}
-		lastInRange = point.V
 		if point.T >= rangeStartMsec {
 			if isCounter &&
 				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
@@ -269,7 +267,7 @@ func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter boo
 		lastValue = point.V
 	}
 
-	result := lastInRange - lastBeforeRange + inRangeRestartSkew
+	result := lastValue - lastBeforeRange + inRangeRestartSkew
 
 	log.Printf("yIncrease: returning result: %.1f\n", result)
 
