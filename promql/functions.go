@@ -16,7 +16,6 @@ package promql
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"sort"
@@ -234,41 +233,31 @@ func debugSampleString(points []Point) string {
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
-	log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
-	log.Println("yIncrease: samples: ", debugSampleString(points))
+	// log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
+	// log.Println("yIncrease: samples: ", debugSampleString(points))
+	
+	var lastBeforeRange, lastInRange, inRangeRestartSkew float64
 
-	lastBeforeRange := float64(0.0) // This provides the 0 counter fix for a fresh start of a pod.
 	if !isCounter && len(points) > 0 {
 		lastBeforeRange = points[0].V // Gauges don't start at 0.
 	}
-	lastInRange := float64(0.0)
-
-	lastValue := float64(0.0)
-	inRangeRestartSkew := float64(0.0)
 
 	// The points are in time order, so we can just walk the list once and remember the last values
-	// seen "before" and "in" range. If there are no values in range, we use the last value before range.
-	for _, point := range points {
-		if point.T >= rangeEndMsec { // Only consider points in [rangeStartMsec, rangeEndMsec).
-			break
-		}
-		lastInRange = point.V
-		if point.T >= rangeStartMsec {
+	// seen "before" and "in" range. If there are no values in range, we use the last value before range
+	// so that the increase is 0.
+	for i := 0; i < len(points) && points[i].T < rangeEndMsec; i++ { // Only consider points in [rangeStartMsec, rangeEndMsec).
+		if points[i].T >= rangeStartMsec {
 			if isCounter &&
-				point.V < lastValue { // If counter went backwards, it must have been a counter reset on process restart.
-				inRangeRestartSkew += lastValue
+				points[i].V < lastInRange { // If counter went backwards, it must have been a counter reset on process restart.
+				inRangeRestartSkew += lastInRange
 			}
 		} else {
-			lastBeforeRange = point.V
+			lastBeforeRange = points[i].V
 		}
-		lastValue = point.V
+		lastInRange = points[i].V
 	}
 
-	result := lastInRange - lastBeforeRange + inRangeRestartSkew
-
-	log.Printf("yIncrease: returning result: %.1f\n", result)
-
-	return result
+	return lastInRange - lastBeforeRange + inRangeRestartSkew
 }
 
 // === delta(Matrix parser.ValueTypeMatrix) Vector ===
