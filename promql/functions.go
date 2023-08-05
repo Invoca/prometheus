@@ -14,7 +14,6 @@
 package promql
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"os"
@@ -202,25 +201,6 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	})
 }
 
-const elideSamplesAfter int = 10
-
-func debugSampleString(points []Point) string {
-	buffer := new(bytes.Buffer)
-	for i, point := range points {
-		if i == elideSamplesAfter && len(points)-1 > elideSamplesAfter {
-			fmt.Fprintf(buffer, "...")
-		} else if i > elideSamplesAfter && len(points)-i > elideSamplesAfter {
-			continue
-		} else {
-			if i > 0 {
-				fmt.Fprintf(buffer, ", ")
-			}
-			fmt.Fprintf(buffer, "[%.3f,%.1f]", float64(point.T)/1000.0, point.V)
-		}
-	}
-	return buffer.String()
-}
-
 // yIncrease is a utility function for yincrease/yrate/ydelta.
 // It calculates the increase of the range (allowing for counter resets),
 // taking into account the sample at the end of the previous range (just before rangeStartMsec).
@@ -233,9 +213,6 @@ func debugSampleString(points []Point) string {
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []Point, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
-	// log.Printf("yIncrease: range: %.3f...%.3f\n", float64(rangeStartMsec)/1000.0, float64(rangeEndMsec)/1000.0)
-	// log.Println("yIncrease: samples: ", debugSampleString(points))
-	
 	var lastBeforeRange, lastInRange, inRangeRestartSkew float64
 
 	if !isCounter && len(points) > 0 {
