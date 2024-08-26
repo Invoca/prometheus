@@ -17,6 +17,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/prometheus/model/exemplar"
@@ -44,9 +45,14 @@ hh_bucket{le="+Inf"} 1
 # TYPE gh gaugehistogram
 gh_bucket{le="+Inf"} 1
 # TYPE hhh histogram
-hhh_bucket{le="+Inf"} 1 # {aa="bb"} 4
+hhh_bucket{le="+Inf"} 1 # {id="histogram-bucket-test"} 4
+hhh_count 1 # {id="histogram-count-test"} 4
 # TYPE ggh gaugehistogram
-ggh_bucket{le="+Inf"} 1 # {cc="dd",xx="yy"} 4 123.123
+ggh_bucket{le="+Inf"} 1 # {id="gaugehistogram-bucket-test",xx="yy"} 4 123.123
+ggh_count 1 # {id="gaugehistogram-count-test",xx="yy"} 4 123.123
+# TYPE smr_seconds summary
+smr_seconds_count 2.0 # {id="summary-count-test"} 1 123.321
+smr_seconds_sum 42.0 # {id="summary-sum-test"} 1 123.321
 # TYPE ii info
 ii{foo="bar"} 1
 # TYPE ss stateset
@@ -58,7 +64,7 @@ _metric_starting_with_underscore 1
 testmetric{_label_starting_with_underscore="foo"} 1
 testmetric{label="\"bar\""} 1
 # TYPE foo counter
-foo_total 17.0 1520879607.789 # {xx="yy"} 5`
+foo_total 17.0 1520879607.789 # {id="counter-test"} 5`
 
 	input += "\n# HELP metric foo\x00bar"
 	input += "\nnull_byte_metric{a=\"abc\x00\"} 1"
@@ -66,23 +72,13 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 
 	int64p := func(x int64) *int64 { return &x }
 
-	exp := []struct {
-		lset    labels.Labels
-		m       string
-		t       *int64
-		v       float64
-		typ     MetricType
-		help    string
-		unit    string
-		comment string
-		e       *exemplar.Exemplar
-	}{
+	exp := []expectedParse{
 		{
 			m:    "go_gc_duration_seconds",
 			help: "A summary of the GC invocation durations.",
 		}, {
 			m:   "go_gc_duration_seconds",
-			typ: MetricTypeSummary,
+			typ: model.MetricTypeSummary,
 		}, {
 			m:    "go_gc_duration_seconds",
 			unit: "seconds",
@@ -124,7 +120,7 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 			help: "Number of goroutines that currently exist.",
 		}, {
 			m:   "go_goroutines",
-			typ: MetricTypeGauge,
+			typ: model.MetricTypeGauge,
 		}, {
 			m:    `go_goroutines`,
 			v:    33,
@@ -132,44 +128,67 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 			lset: labels.FromStrings("__name__", "go_goroutines"),
 		}, {
 			m:   "hh",
-			typ: MetricTypeHistogram,
+			typ: model.MetricTypeHistogram,
 		}, {
 			m:    `hh_bucket{le="+Inf"}`,
 			v:    1,
 			lset: labels.FromStrings("__name__", "hh_bucket", "le", "+Inf"),
 		}, {
 			m:   "gh",
-			typ: MetricTypeGaugeHistogram,
+			typ: model.MetricTypeGaugeHistogram,
 		}, {
 			m:    `gh_bucket{le="+Inf"}`,
 			v:    1,
 			lset: labels.FromStrings("__name__", "gh_bucket", "le", "+Inf"),
 		}, {
 			m:   "hhh",
-			typ: MetricTypeHistogram,
+			typ: model.MetricTypeHistogram,
 		}, {
 			m:    `hhh_bucket{le="+Inf"}`,
 			v:    1,
 			lset: labels.FromStrings("__name__", "hhh_bucket", "le", "+Inf"),
-			e:    &exemplar.Exemplar{Labels: labels.FromStrings("aa", "bb"), Value: 4},
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "histogram-bucket-test"), Value: 4},
+		}, {
+			m:    `hhh_count`,
+			v:    1,
+			lset: labels.FromStrings("__name__", "hhh_count"),
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "histogram-count-test"), Value: 4},
 		}, {
 			m:   "ggh",
-			typ: MetricTypeGaugeHistogram,
+			typ: model.MetricTypeGaugeHistogram,
 		}, {
 			m:    `ggh_bucket{le="+Inf"}`,
 			v:    1,
 			lset: labels.FromStrings("__name__", "ggh_bucket", "le", "+Inf"),
-			e:    &exemplar.Exemplar{Labels: labels.FromStrings("cc", "dd", "xx", "yy"), Value: 4, HasTs: true, Ts: 123123},
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "gaugehistogram-bucket-test", "xx", "yy"), Value: 4, HasTs: true, Ts: 123123},
+		}, {
+			m:    `ggh_count`,
+			v:    1,
+			lset: labels.FromStrings("__name__", "ggh_count"),
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "gaugehistogram-count-test", "xx", "yy"), Value: 4, HasTs: true, Ts: 123123},
+		}, {
+			m:   "smr_seconds",
+			typ: model.MetricTypeSummary,
+		}, {
+			m:    `smr_seconds_count`,
+			v:    2,
+			lset: labels.FromStrings("__name__", "smr_seconds_count"),
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "summary-count-test"), Value: 1, HasTs: true, Ts: 123321},
+		}, {
+			m:    `smr_seconds_sum`,
+			v:    42,
+			lset: labels.FromStrings("__name__", "smr_seconds_sum"),
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "summary-sum-test"), Value: 1, HasTs: true, Ts: 123321},
 		}, {
 			m:   "ii",
-			typ: MetricTypeInfo,
+			typ: model.MetricTypeInfo,
 		}, {
 			m:    `ii{foo="bar"}`,
 			v:    1,
 			lset: labels.FromStrings("__name__", "ii", "foo", "bar"),
 		}, {
 			m:   "ss",
-			typ: MetricTypeStateset,
+			typ: model.MetricTypeStateset,
 		}, {
 			m:    `ss{ss="foo"}`,
 			v:    1,
@@ -184,7 +203,7 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 			lset: labels.FromStrings("A", "a", "__name__", "ss"),
 		}, {
 			m:   "un",
-			typ: MetricTypeUnknown,
+			typ: model.MetricTypeUnknown,
 		}, {
 			m:    "_metric_starting_with_underscore",
 			v:    1,
@@ -199,13 +218,13 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 			lset: labels.FromStrings("__name__", "testmetric", "label", `"bar"`),
 		}, {
 			m:   "foo",
-			typ: MetricTypeCounter,
+			typ: model.MetricTypeCounter,
 		}, {
 			m:    "foo_total",
 			v:    17,
 			lset: labels.FromStrings("__name__", "foo_total"),
 			t:    int64p(1520879607789),
-			e:    &exemplar.Exemplar{Labels: labels.FromStrings("xx", "yy"), Value: 5},
+			e:    &exemplar.Exemplar{Labels: labels.FromStrings("id", "counter-test"), Value: 5},
 		}, {
 			m:    "metric",
 			help: "foo\x00bar",
@@ -216,61 +235,79 @@ foo_total 17.0 1520879607.789 # {xx="yy"} 5`
 		},
 	}
 
-	p := NewOpenMetricsParser([]byte(input))
-	i := 0
+	p := NewOpenMetricsParser([]byte(input), labels.NewSymbolTable())
+	checkParseResults(t, p, exp)
+}
 
-	var res labels.Labels
+func TestUTF8OpenMetricsParse(t *testing.T) {
+	oldValidationScheme := model.NameValidationScheme
+	model.NameValidationScheme = model.UTF8Validation
+	defer func() {
+		model.NameValidationScheme = oldValidationScheme
+	}()
 
-	for {
-		et, err := p.Next()
-		if err == io.EOF {
-			break
-		}
-		require.NoError(t, err)
+	input := `# HELP "go.gc_duration_seconds" A summary of the GC invocation durations.
+# TYPE "go.gc_duration_seconds" summary
+# UNIT "go.gc_duration_seconds" seconds
+{"go.gc_duration_seconds",quantile="0"} 4.9351e-05
+{"go.gc_duration_seconds",quantile="0.25"} 7.424100000000001e-05
+{"go.gc_duration_seconds",quantile="0.5",a="b"} 8.3835e-05
+{"http.status",q="0.9",a="b"} 8.3835e-05
+{"http.status",q="0.9",a="b"} 8.3835e-05
+{q="0.9","http.status",a="b"} 8.3835e-05
+{"go.gc_duration_seconds_sum"} 0.004304266
+{"Heizölrückstoßabdämpfung 10€ metric with \"interesting\" {character\nchoices}","strange©™\n'quoted' \"name\""="6"} 10.0`
 
-		switch et {
-		case EntrySeries:
-			m, ts, v := p.Series()
+	input += "\n# EOF\n"
 
-			var e exemplar.Exemplar
-			p.Metric(&res)
-			found := p.Exemplar(&e)
-			require.Equal(t, exp[i].m, string(m))
-			if e.HasTs {
-				require.Equal(t, exp[i].t, ts)
-			}
-			require.Equal(t, exp[i].v, v)
-			require.Equal(t, exp[i].lset, res)
-			if exp[i].e == nil {
-				require.Equal(t, false, found)
-			} else {
-				require.Equal(t, true, found)
-				require.Equal(t, *exp[i].e, e)
-			}
-			res = res[:0]
-
-		case EntryType:
-			m, typ := p.Type()
-			require.Equal(t, exp[i].m, string(m))
-			require.Equal(t, exp[i].typ, typ)
-
-		case EntryHelp:
-			m, h := p.Help()
-			require.Equal(t, exp[i].m, string(m))
-			require.Equal(t, exp[i].help, string(h))
-
-		case EntryUnit:
-			m, u := p.Unit()
-			require.Equal(t, exp[i].m, string(m))
-			require.Equal(t, exp[i].unit, string(u))
-
-		case EntryComment:
-			require.Equal(t, exp[i].comment, string(p.Comment()))
-		}
-
-		i++
+	exp := []expectedParse{
+		{
+			m:    "go.gc_duration_seconds",
+			help: "A summary of the GC invocation durations.",
+		}, {
+			m:   "go.gc_duration_seconds",
+			typ: model.MetricTypeSummary,
+		}, {
+			m:    "go.gc_duration_seconds",
+			unit: "seconds",
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0"}`,
+			v:    4.9351e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0"),
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0.25"}`,
+			v:    7.424100000000001e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.25"),
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0.5",a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.5", "a", "b"),
+		}, {
+			m:    `{"http.status",q="0.9",a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "http.status", "q", "0.9", "a", "b"),
+		}, {
+			m:    `{"http.status",q="0.9",a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "http.status", "q", "0.9", "a", "b"),
+		}, {
+			m:    `{q="0.9","http.status",a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "http.status", "q", "0.9", "a", "b"),
+		}, {
+			m:    `{"go.gc_duration_seconds_sum"}`,
+			v:    0.004304266,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds_sum"),
+		}, {
+			m: `{"Heizölrückstoßabdämpfung 10€ metric with \"interesting\" {character\nchoices}","strange©™\n'quoted' \"name\""="6"}`,
+			v: 10.0,
+			lset: labels.FromStrings("__name__", `Heizölrückstoßabdämpfung 10€ metric with "interesting" {character
+choices}`, "strange©™\n'quoted' \"name\"", "6"),
+		},
 	}
-	require.Equal(t, len(exp), i)
+
+	p := NewOpenMetricsParser([]byte(input), labels.NewSymbolTable())
+	checkParseResults(t, p, exp)
 }
 
 func TestOpenMetricsParseErrors(t *testing.T) {
@@ -295,11 +332,11 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "\n",
-			err:   "\"INVALID\" \"\\n\" is not a valid start token",
+			err:   "expected a valid start token, got \"\\n\" (\"INVALID\") while parsing: \"\\n\"",
 		},
 		{
 			input: "metric",
-			err:   "expected value after metric, got \"EOF\"",
+			err:   "expected value after metric, got \"metric\" (\"EOF\") while parsing: \"metric\"",
 		},
 		{
 			input: "metric 1",
@@ -315,19 +352,19 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "a\n#EOF\n",
-			err:   "expected value after metric, got \"INVALID\"",
+			err:   "expected value after metric, got \"\\n\" (\"INVALID\") while parsing: \"a\\n\"",
 		},
 		{
 			input: "\n\n#EOF\n",
-			err:   "\"INVALID\" \"\\n\" is not a valid start token",
+			err:   "expected a valid start token, got \"\\n\" (\"INVALID\") while parsing: \"\\n\"",
 		},
 		{
 			input: " a 1\n#EOF\n",
-			err:   "\"INVALID\" \" \" is not a valid start token",
+			err:   "expected a valid start token, got \" \" (\"INVALID\") while parsing: \" \"",
 		},
 		{
 			input: "9\n#EOF\n",
-			err:   "\"INVALID\" \"9\" is not a valid start token",
+			err:   "expected a valid start token, got \"9\" (\"INVALID\") while parsing: \"9\"",
 		},
 		{
 			input: "# TYPE u untyped\n#EOF\n",
@@ -339,11 +376,11 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "#  TYPE c counter\n#EOF\n",
-			err:   "\"INVALID\" \" \" is not a valid start token",
+			err:   "expected a valid start token, got \"#  \" (\"INVALID\") while parsing: \"#  \"",
 		},
 		{
 			input: "# TYPE \n#EOF\n",
-			err:   "expected metric name after TYPE, got \"INVALID\"",
+			err:   "expected metric name after TYPE, got \"\\n\" (\"INVALID\") while parsing: \"# TYPE \\n\"",
 		},
 		{
 			input: "# TYPE m\n#EOF\n",
@@ -351,19 +388,19 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "# UNIT metric suffix\n#EOF\n",
-			err:   "unit not a suffix of metric \"metric\"",
+			err:   "unit \"suffix\" not a suffix of metric \"metric\"",
 		},
 		{
 			input: "# UNIT metricsuffix suffix\n#EOF\n",
-			err:   "unit not a suffix of metric \"metricsuffix\"",
+			err:   "unit \"suffix\" not a suffix of metric \"metricsuffix\"",
 		},
 		{
 			input: "# UNIT m suffix\n#EOF\n",
-			err:   "unit not a suffix of metric \"m\"",
+			err:   "unit \"suffix\" not a suffix of metric \"m\"",
 		},
 		{
 			input: "# UNIT \n#EOF\n",
-			err:   "expected metric name after UNIT, got \"INVALID\"",
+			err:   "expected metric name after UNIT, got \"\\n\" (\"INVALID\") while parsing: \"# UNIT \\n\"",
 		},
 		{
 			input: "# UNIT m\n#EOF\n",
@@ -371,7 +408,7 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "# HELP \n#EOF\n",
-			err:   "expected metric name after HELP, got \"INVALID\"",
+			err:   "expected metric name after HELP, got \"\\n\" (\"INVALID\") while parsing: \"# HELP \\n\"",
 		},
 		{
 			input: "# HELP m\n#EOF\n",
@@ -379,27 +416,27 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "a\t1\n#EOF\n",
-			err:   "expected value after metric, got \"INVALID\"",
+			err:   "expected value after metric, got \"\\t\" (\"INVALID\") while parsing: \"a\\t\"",
 		},
 		{
 			input: "a 1\t2\n#EOF\n",
-			err:   "strconv.ParseFloat: parsing \"1\\t2\": invalid syntax",
+			err:   "strconv.ParseFloat: parsing \"1\\t2\": invalid syntax while parsing: \"a 1\\t2\"",
 		},
 		{
 			input: "a 1 2 \n#EOF\n",
-			err:   "expected next entry after timestamp, got \"INVALID\"",
+			err:   "expected next entry after timestamp, got \" \\n\" (\"INVALID\") while parsing: \"a 1 2 \\n\"",
 		},
 		{
 			input: "a 1 2 #\n#EOF\n",
-			err:   "expected next entry after timestamp, got \"TIMESTAMP\"",
+			err:   "expected next entry after timestamp, got \" #\\n\" (\"TIMESTAMP\") while parsing: \"a 1 2 #\\n\"",
 		},
 		{
 			input: "a 1 1z\n#EOF\n",
-			err:   "strconv.ParseFloat: parsing \"1z\": invalid syntax",
+			err:   "strconv.ParseFloat: parsing \"1z\": invalid syntax while parsing: \"a 1 1z\"",
 		},
 		{
 			input: " # EOF\n",
-			err:   "\"INVALID\" \" \" is not a valid start token",
+			err:   "expected a valid start token, got \" \" (\"INVALID\") while parsing: \" \"",
 		},
 		{
 			input: "# EOF\na 1",
@@ -415,7 +452,7 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "#\tTYPE c counter\n",
-			err:   "\"INVALID\" \"\\t\" is not a valid start token",
+			err:   "expected a valid start token, got \"#\\t\" (\"INVALID\") while parsing: \"#\\t\"",
 		},
 		{
 			input: "# TYPE c  counter\n",
@@ -423,140 +460,152 @@ func TestOpenMetricsParseErrors(t *testing.T) {
 		},
 		{
 			input: "a 1 1 1\n# EOF\n",
-			err:   "expected next entry after timestamp, got \"TIMESTAMP\"",
+			err:   "expected next entry after timestamp, got \" 1\\n\" (\"TIMESTAMP\") while parsing: \"a 1 1 1\\n\"",
 		},
 		{
 			input: "a{b='c'} 1\n# EOF\n",
-			err:   "expected label value, got \"INVALID\"",
-		},
-		{
-			input: "a{b=\"c\",} 1\n# EOF\n",
-			err:   "expected label name, got \"BCLOSE\"",
+			err:   "expected label value, got \"'\" (\"INVALID\") while parsing: \"a{b='\"",
 		},
 		{
 			input: "a{,b=\"c\"} 1\n# EOF\n",
-			err:   "expected label name or left brace, got \"COMMA\"",
+			err:   "expected label name, got \",b\" (\"COMMA\") while parsing: \"a{,b\"",
 		},
 		{
 			input: "a{b=\"c\"d=\"e\"} 1\n# EOF\n",
-			err:   "expected comma, got \"LNAME\"",
+			err:   "expected comma or brace close, got \"d=\" (\"LNAME\") while parsing: \"a{b=\\\"c\\\"d=\"",
 		},
 		{
 			input: "a{b=\"c\",,d=\"e\"} 1\n# EOF\n",
-			err:   "expected label name, got \"COMMA\"",
+			err:   "expected label name, got \",d\" (\"COMMA\") while parsing: \"a{b=\\\"c\\\",,d\"",
 		},
 		{
 			input: "a{b=\n# EOF\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\n\" (\"INVALID\") while parsing: \"a{b=\\n\"",
 		},
 		{
 			input: "a{\xff=\"foo\"} 1\n# EOF\n",
-			err:   "expected label name or left brace, got \"INVALID\"",
+			err:   "expected label name, got \"\\xff\" (\"INVALID\") while parsing: \"a{\\xff\"",
 		},
 		{
 			input: "a{b=\"\xff\"} 1\n# EOF\n",
-			err:   "invalid UTF-8 label value",
+			err:   "invalid UTF-8 label value: \"\\\"\\xff\\\"\"",
+		},
+		{
+			input: `{"a","b = "c"}
+# EOF
+`,
+			err: "expected equal, got \"c\\\"\" (\"LNAME\") while parsing: \"{\\\"a\\\",\\\"b = \\\"c\\\"\"",
+		},
+		{
+			input: `{"a",b\nc="d"} 1
+# EOF
+`,
+			err: "expected equal, got \"\\\\\" (\"INVALID\") while parsing: \"{\\\"a\\\",b\\\\\"",
 		},
 		{
 			input: "a true\n",
-			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax",
+			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax while parsing: \"a true\"",
 		},
 		{
 			input: "something_weird{problem=\"\n# EOF\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\"\\n\" (\"INVALID\") while parsing: \"something_weird{problem=\\\"\\n\"",
 		},
 		{
 			input: "empty_label_name{=\"\"} 0\n# EOF\n",
-			err:   "expected label name or left brace, got \"EQUAL\"",
+			err:   "expected label name, got \"=\\\"\" (\"EQUAL\") while parsing: \"empty_label_name{=\\\"\"",
 		},
 		{
 			input: "foo 1_2\n\n# EOF\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 1_2\"",
 		},
 		{
 			input: "foo 0x1p-3\n\n# EOF\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 0x1p-3\"",
 		},
 		{
 			input: "foo 0x1P-3\n\n# EOF\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 0x1P-3\"",
 		},
 		{
 			input: "foo 0 1_2\n\n# EOF\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 0 1_2\"",
 		},
 		{
 			input: "custom_metric_total 1 # {aa=bb}\n# EOF\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"b\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {aa=b\"",
 		},
 		{
 			input: "custom_metric_total 1 # {aa=\"bb\"}\n# EOF\n",
-			err:   "expected value after exemplar labels, got \"INVALID\"",
+			err:   "expected value after exemplar labels, got \"\\n\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\"}\\n\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb"}`,
-			err:   "expected value after exemplar labels, got \"EOF\"",
+			err:   "expected value after exemplar labels, got \"}\" (\"EOF\") while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\"}\"",
 		},
 		{
-			input: `custom_metric 1 # {aa="bb"}`,
-			err:   "metric name custom_metric does not support exemplars",
+			input: `custom_metric_total 1 # {bb}`,
+			err:   "expected label name, got \"}\" (\"BCLOSE\") while parsing: \"custom_metric_total 1 # {bb}\"",
+		},
+		{
+			input: `custom_metric_total 1 # {bb, a="dd"}`,
+			err:   "expected label name, got \", \" (\"COMMA\") while parsing: \"custom_metric_total 1 # {bb, \"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb",,cc="dd"} 1`,
-			err:   "expected label name, got \"COMMA\"",
+			err:   "expected label name, got \",c\" (\"COMMA\") while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\",,c\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb"} 1_2`,
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\"} 1_2\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb"} 0x1p-3`,
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\"} 0x1p-3\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb"} true`,
-			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax",
+			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\"} true\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa="bb",cc=}`,
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"}\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {aa=\\\"bb\\\",cc=}\"",
 		},
 		{
 			input: `custom_metric_total 1 # {aa=\"\xff\"} 9.0`,
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\\\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {aa=\\\\\"",
 		},
 		{
 			input: `{b="c",} 1`,
-			err:   `"INVALID" "{" is not a valid start token`,
+			err:   "metric name not set while parsing: \"{b=\\\"c\\\",} 1\"",
 		},
 		{
 			input: `a 1 NaN`,
-			err:   `invalid timestamp`,
+			err:   `invalid timestamp NaN`,
 		},
 		{
 			input: `a 1 -Inf`,
-			err:   `invalid timestamp`,
+			err:   `invalid timestamp -Inf`,
 		},
 		{
 			input: `a 1 Inf`,
-			err:   `invalid timestamp`,
+			err:   `invalid timestamp +Inf`,
 		},
 		{
 			input: "# TYPE hhh histogram\nhhh_bucket{le=\"+Inf\"} 1 # {aa=\"bb\"} 4 NaN",
-			err:   `invalid exemplar timestamp`,
+			err:   `invalid exemplar timestamp NaN`,
 		},
 		{
 			input: "# TYPE hhh histogram\nhhh_bucket{le=\"+Inf\"} 1 # {aa=\"bb\"} 4 -Inf",
-			err:   `invalid exemplar timestamp`,
+			err:   `invalid exemplar timestamp -Inf`,
 		},
 		{
 			input: "# TYPE hhh histogram\nhhh_bucket{le=\"+Inf\"} 1 # {aa=\"bb\"} 4 Inf",
-			err:   `invalid exemplar timestamp`,
+			err:   `invalid exemplar timestamp +Inf`,
 		},
 	}
 
 	for i, c := range cases {
-		p := NewOpenMetricsParser([]byte(c.input))
+		p := NewOpenMetricsParser([]byte(c.input), labels.NewSymbolTable())
 		var err error
 		for err == nil {
 			_, err = p.Next()
@@ -588,40 +637,40 @@ func TestOMNullByteHandling(t *testing.T) {
 		},
 		{
 			input: "a{b=\x00\"ssss\"} 1\n# EOF\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\x00\" (\"INVALID\") while parsing: \"a{b=\\x00\"",
 		},
 		{
 			input: "a{b=\"\x00",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\"\\x00\" (\"INVALID\") while parsing: \"a{b=\\\"\\x00\"",
 		},
 		{
 			input: "a{b\x00=\"hiih\"}	1",
-			err: "expected equal, got \"INVALID\"",
+			err:   "expected equal, got \"\\x00\" (\"INVALID\") while parsing: \"a{b\\x00\"",
 		},
 		{
 			input: "a\x00{b=\"ddd\"} 1",
-			err:   "expected value after metric, got \"INVALID\"",
+			err:   "expected value after metric, got \"\\x00\" (\"INVALID\") while parsing: \"a\\x00\"",
 		},
 		{
 			input: "#",
-			err:   "\"INVALID\" \" \" is not a valid start token",
+			err:   "expected a valid start token, got \"#\" (\"INVALID\") while parsing: \"#\"",
 		},
 		{
 			input: "# H",
-			err:   "\"INVALID\" \" \" is not a valid start token",
+			err:   "expected a valid start token, got \"# H\" (\"INVALID\") while parsing: \"# H\"",
 		},
 		{
 			input: "custom_metric_total 1 # {b=\x00\"ssss\"} 1\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\x00\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {b=\\x00\"",
 		},
 		{
 			input: "custom_metric_total 1 # {b=\"\x00ss\"} 1\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\"\\x00\" (\"INVALID\") while parsing: \"custom_metric_total 1 # {b=\\\"\\x00\"",
 		},
 	}
 
 	for i, c := range cases {
-		p := NewOpenMetricsParser([]byte(c.input))
+		p := NewOpenMetricsParser([]byte(c.input), labels.NewSymbolTable())
 		var err error
 		for err == nil {
 			_, err = p.Next()

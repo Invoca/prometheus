@@ -15,11 +15,11 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/prometheus/scrape"
@@ -27,7 +27,7 @@ import (
 
 // MetadataAppender is an interface used by the Metadata Watcher to send metadata, It is read from the scrape manager, on to somewhere else.
 type MetadataAppender interface {
-	AppendMetadata(context.Context, []scrape.MetricMetadata)
+	AppendWatcherMetadata(context.Context, []scrape.MetricMetadata)
 }
 
 // Watchable represents from where we fetch active targets for metadata.
@@ -136,7 +136,7 @@ func (mw *MetadataWatcher) collect() {
 	metadata := []scrape.MetricMetadata{}
 	for _, tset := range mw.manager.TargetsActive() {
 		for _, target := range tset {
-			for _, entry := range target.MetadataList() {
+			for _, entry := range target.ListMetadata() {
 				if _, ok := metadataSet[entry]; !ok {
 					metadata = append(metadata, entry)
 					metadataSet[entry] = struct{}{}
@@ -146,7 +146,7 @@ func (mw *MetadataWatcher) collect() {
 	}
 
 	// Blocks until the metadata is sent to the remote write endpoint or hardShutdownContext is expired.
-	mw.writer.AppendMetadata(mw.hardShutdownCtx, metadata)
+	mw.writer.AppendWatcherMetadata(mw.hardShutdownCtx, metadata)
 }
 
 func (mw *MetadataWatcher) ready() bool {

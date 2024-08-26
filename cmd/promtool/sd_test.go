@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
+	"github.com/prometheus/prometheus/util/testutil"
 
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +36,7 @@ func TestSDCheckResult(t *testing.T) {
 	}}
 
 	reg, err := relabel.NewRegexp("(.*)")
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	scrapeConfig := &config.ScrapeConfig{
 		ScrapeInterval: model.Duration(1 * time.Minute),
@@ -51,23 +52,23 @@ func TestSDCheckResult(t *testing.T) {
 
 	expectedSDCheckResult := []sdCheckResult{
 		{
-			DiscoveredLabels: labels.Labels{
-				labels.Label{Name: "__address__", Value: "localhost:8080"},
-				labels.Label{Name: "__scrape_interval__", Value: "1m"},
-				labels.Label{Name: "__scrape_timeout__", Value: "10s"},
-				labels.Label{Name: "foo", Value: "bar"},
-			},
-			Labels: labels.Labels{
-				labels.Label{Name: "__address__", Value: "localhost:8080"},
-				labels.Label{Name: "__scrape_interval__", Value: "1m"},
-				labels.Label{Name: "__scrape_timeout__", Value: "10s"},
-				labels.Label{Name: "foo", Value: "bar"},
-				labels.Label{Name: "instance", Value: "localhost:8080"},
-				labels.Label{Name: "newfoo", Value: "bar"},
-			},
+			DiscoveredLabels: labels.FromStrings(
+				"__address__", "localhost:8080",
+				"__scrape_interval__", "1m",
+				"__scrape_timeout__", "10s",
+				"foo", "bar",
+			),
+			Labels: labels.FromStrings(
+				"__address__", "localhost:8080",
+				"__scrape_interval__", "1m",
+				"__scrape_timeout__", "10s",
+				"foo", "bar",
+				"instance", "localhost:8080",
+				"newfoo", "bar",
+			),
 			Error: nil,
 		},
 	}
 
-	require.Equal(t, expectedSDCheckResult, getSDCheckResult(targetGroups, scrapeConfig))
+	testutil.RequireEqual(t, expectedSDCheckResult, getSDCheckResult(targetGroups, scrapeConfig, true))
 }

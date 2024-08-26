@@ -15,18 +15,33 @@ package textparse
 
 import (
 	"bytes"
-	"compress/gzip"
+	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 	"testing"
 
-	"github.com/prometheus/common/expfmt"
-	"github.com/prometheus/common/model"
+	"github.com/klauspost/compress/gzip"
 	"github.com/stretchr/testify/require"
 
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
+
+	"github.com/prometheus/prometheus/model/exemplar"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/util/testutil"
 )
+
+type expectedParse struct {
+	lset    labels.Labels
+	m       string
+	t       *int64
+	v       float64
+	typ     model.MetricType
+	help    string
+	unit    string
+	comment string
+	e       *exemplar.Exemplar
+}
 
 func TestPromParse(t *testing.T) {
 	input := `# HELP go_gc_duration_seconds A summary of the GC invocation durations.
@@ -47,6 +62,7 @@ go_gc_duration_seconds{ quantile="1.0", a="b" } 8.3835e-05
 go_gc_duration_seconds { quantile="1.0", a="b" } 8.3835e-05
 go_gc_duration_seconds { quantile= "1.0", a= "b", } 8.3835e-05
 go_gc_duration_seconds { quantile = "1.0", a = "b" } 8.3835e-05
+go_gc_duration_seconds { quantile = "2.0" a = "b" } 8.3835e-05
 go_gc_duration_seconds_count 99
 some:aggregate:rate5m{a_b="c"}	1
 # HELP go_goroutines Number of goroutines that currently exist.
@@ -60,21 +76,13 @@ testmetric{label="\"bar\""} 1`
 
 	int64p := func(x int64) *int64 { return &x }
 
-	exp := []struct {
-		lset    labels.Labels
-		m       string
-		t       *int64
-		v       float64
-		typ     MetricType
-		help    string
-		comment string
-	}{
+	exp := []expectedParse{
 		{
 			m:    "go_gc_duration_seconds",
 			help: "A summary of the GC invocation durations.",
 		}, {
 			m:   "go_gc_duration_seconds",
-			typ: MetricTypeSummary,
+			typ: model.MetricTypeSummary,
 		}, {
 			m:    `go_gc_duration_seconds{quantile="0"}`,
 			v:    4.9351e-05,
@@ -130,6 +138,11 @@ testmetric{label="\"bar\""} 1`
 			v:    8.3835e-05,
 			lset: labels.FromStrings("__name__", "go_gc_duration_seconds", "quantile", "1.0", "a", "b"),
 		}, {
+			// NOTE: Unlike OpenMetrics, Promparse allows spaces between label terms. This appears to be unintended and should probably be fixed.
+			m:    `go_gc_duration_seconds { quantile = "2.0" a = "b" }`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go_gc_duration_seconds", "quantile", "2.0", "a", "b"),
+		}, {
 			m:    `go_gc_duration_seconds_count`,
 			v:    99,
 			lset: labels.FromStrings("__name__", "go_gc_duration_seconds_count"),
@@ -142,7 +155,7 @@ testmetric{label="\"bar\""} 1`
 			help: "Number of goroutines that currently exist.",
 		}, {
 			m:   "go_goroutines",
-			typ: MetricTypeGauge,
+			typ: model.MetricTypeGauge,
 		}, {
 			m:    `go_goroutines`,
 			v:    33,
@@ -170,14 +183,18 @@ testmetric{label="\"bar\""} 1`
 		},
 	}
 
-	p := NewPromParser([]byte(input))
+	p := NewPromParser([]byte(input), labels.NewSymbolTable())
+	checkParseResults(t, p, exp)
+}
+
+func checkParseResults(t *testing.T, p Parser, exp []expectedParse) {
 	i := 0
 
 	var res labels.Labels
 
 	for {
 		et, err := p.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -191,8 +208,16 @@ testmetric{label="\"bar\""} 1`
 			require.Equal(t, exp[i].m, string(m))
 			require.Equal(t, exp[i].t, ts)
 			require.Equal(t, exp[i].v, v)
-			require.Equal(t, exp[i].lset, res)
-			res = res[:0]
+			testutil.RequireEqual(t, exp[i].lset, res)
+
+			var e exemplar.Exemplar
+			found := p.Exemplar(&e)
+			if exp[i].e == nil {
+				require.False(t, found)
+			} else {
+				require.True(t, found)
+				testutil.RequireEqual(t, *exp[i].e, e)
+			}
 
 		case EntryType:
 			m, typ := p.Type()
@@ -204,13 +229,98 @@ testmetric{label="\"bar\""} 1`
 			require.Equal(t, exp[i].m, string(m))
 			require.Equal(t, exp[i].help, string(h))
 
+		case EntryUnit:
+			m, u := p.Unit()
+			require.Equal(t, exp[i].m, string(m))
+			require.Equal(t, exp[i].unit, string(u))
+
 		case EntryComment:
 			require.Equal(t, exp[i].comment, string(p.Comment()))
 		}
 
 		i++
 	}
-	require.Equal(t, len(exp), i)
+	require.Len(t, exp, i)
+}
+
+func TestUTF8PromParse(t *testing.T) {
+	oldValidationScheme := model.NameValidationScheme
+	model.NameValidationScheme = model.UTF8Validation
+	defer func() {
+		model.NameValidationScheme = oldValidationScheme
+	}()
+
+	input := `# HELP "go.gc_duration_seconds" A summary of the GC invocation durations.
+# 	TYPE "go.gc_duration_seconds" summary
+{"go.gc_duration_seconds",quantile="0"} 4.9351e-05
+{"go.gc_duration_seconds",quantile="0.25",} 7.424100000000001e-05
+{"go.gc_duration_seconds",quantile="0.5",a="b"} 8.3835e-05
+{"go.gc_duration_seconds",quantile="0.8", a="b"} 8.3835e-05
+{"go.gc_duration_seconds", quantile="0.9", a="b"} 8.3835e-05
+{"go.gc_duration_seconds", quantile="1.0", a="b" } 8.3835e-05
+{ "go.gc_duration_seconds", quantile="1.0", a="b" } 8.3835e-05
+{ "go.gc_duration_seconds", quantile= "1.0", a= "b", } 8.3835e-05
+{ "go.gc_duration_seconds", quantile = "1.0", a = "b" } 8.3835e-05
+{"go.gc_duration_seconds_count"} 99
+{"Heizölrückstoßabdämpfung 10€ metric with \"interesting\" {character\nchoices}","strange©™\n'quoted' \"name\""="6"} 10.0`
+
+	exp := []expectedParse{
+		{
+			m:    "go.gc_duration_seconds",
+			help: "A summary of the GC invocation durations.",
+		}, {
+			m:   "go.gc_duration_seconds",
+			typ: model.MetricTypeSummary,
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0"}`,
+			v:    4.9351e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0"),
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0.25",}`,
+			v:    7.424100000000001e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.25"),
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0.5",a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.5", "a", "b"),
+		}, {
+			m:    `{"go.gc_duration_seconds",quantile="0.8", a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.8", "a", "b"),
+		}, {
+			m:    `{"go.gc_duration_seconds", quantile="0.9", a="b"}`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "0.9", "a", "b"),
+		}, {
+			m:    `{"go.gc_duration_seconds", quantile="1.0", a="b" }`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "1.0", "a", "b"),
+		}, {
+			m:    `{ "go.gc_duration_seconds", quantile="1.0", a="b" }`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "1.0", "a", "b"),
+		}, {
+			m:    `{ "go.gc_duration_seconds", quantile= "1.0", a= "b", }`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "1.0", "a", "b"),
+		}, {
+			m:    `{ "go.gc_duration_seconds", quantile = "1.0", a = "b" }`,
+			v:    8.3835e-05,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds", "quantile", "1.0", "a", "b"),
+		}, {
+			m:    `{"go.gc_duration_seconds_count"}`,
+			v:    99,
+			lset: labels.FromStrings("__name__", "go.gc_duration_seconds_count"),
+		}, {
+			m: `{"Heizölrückstoßabdämpfung 10€ metric with \"interesting\" {character\nchoices}","strange©™\n'quoted' \"name\""="6"}`,
+			v: 10.0,
+			lset: labels.FromStrings("__name__", `Heizölrückstoßabdämpfung 10€ metric with "interesting" {character
+choices}`, "strange©™\n'quoted' \"name\"", "6"),
+		},
+	}
+
+	p := NewPromParser([]byte(input), labels.NewSymbolTable())
+	checkParseResults(t, p, exp)
 }
 
 func TestPromParseErrors(t *testing.T) {
@@ -220,68 +330,76 @@ func TestPromParseErrors(t *testing.T) {
 	}{
 		{
 			input: "a",
-			err:   "expected value after metric, got \"MNAME\"",
+			err:   "expected value after metric, got \"\\n\" (\"INVALID\") while parsing: \"a\\n\"",
 		},
 		{
 			input: "a{b='c'} 1\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"'\" (\"INVALID\") while parsing: \"a{b='\"",
 		},
 		{
 			input: "a{b=\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\n\" (\"INVALID\") while parsing: \"a{b=\\n\"",
 		},
 		{
 			input: "a{\xff=\"foo\"} 1\n",
-			err:   "expected label name, got \"INVALID\"",
+			err:   "expected label name, got \"\\xff\" (\"INVALID\") while parsing: \"a{\\xff\"",
 		},
 		{
 			input: "a{b=\"\xff\"} 1\n",
-			err:   "invalid UTF-8 label value",
+			err:   "invalid UTF-8 label value: \"\\\"\\xff\\\"\"",
+		},
+		{
+			input: `{"a", "b = "c"}`,
+			err:   "expected equal, got \"c\\\"\" (\"LNAME\") while parsing: \"{\\\"a\\\", \\\"b = \\\"c\\\"\"",
+		},
+		{
+			input: `{"a",b\nc="d"} 1`,
+			err:   "expected equal, got \"\\\\\" (\"INVALID\") while parsing: \"{\\\"a\\\",b\\\\\"",
 		},
 		{
 			input: "a true\n",
-			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax",
+			err:   "strconv.ParseFloat: parsing \"true\": invalid syntax while parsing: \"a true\"",
 		},
 		{
 			input: "something_weird{problem=\"",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\"\\n\" (\"INVALID\") while parsing: \"something_weird{problem=\\\"\\n\"",
 		},
 		{
 			input: "empty_label_name{=\"\"} 0",
-			err:   "expected label name, got \"EQUAL\"",
+			err:   "expected label name, got \"=\\\"\" (\"EQUAL\") while parsing: \"empty_label_name{=\\\"\"",
 		},
 		{
 			input: "foo 1_2\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 1_2\"",
 		},
 		{
 			input: "foo 0x1p-3\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 0x1p-3\"",
 		},
 		{
 			input: "foo 0x1P-3\n",
-			err:   "unsupported character in float",
+			err:   "unsupported character in float while parsing: \"foo 0x1P-3\"",
 		},
 		{
 			input: "foo 0 1_2\n",
-			err:   "expected next entry after timestamp, got \"MNAME\"",
+			err:   "expected next entry after timestamp, got \"_\" (\"INVALID\") while parsing: \"foo 0 1_\"",
 		},
 		{
 			input: `{a="ok"} 1`,
-			err:   `"INVALID" is not a valid start token`,
+			err:   "metric name not set while parsing: \"{a=\\\"ok\\\"} 1\"",
 		},
 		{
 			input: "# TYPE #\n#EOF\n",
-			err:   "expected metric name after TYPE, got \"INVALID\"",
+			err:   "expected metric name after TYPE, got \"#\" (\"INVALID\") while parsing: \"# TYPE #\"",
 		},
 		{
 			input: "# HELP #\n#EOF\n",
-			err:   "expected metric name after HELP, got \"INVALID\"",
+			err:   "expected metric name after HELP, got \"#\" (\"INVALID\") while parsing: \"# HELP #\"",
 		},
 	}
 
 	for i, c := range cases {
-		p := NewPromParser([]byte(c.input))
+		p := NewPromParser([]byte(c.input), labels.NewSymbolTable())
 		var err error
 		for err == nil {
 			_, err = p.Next()
@@ -314,24 +432,28 @@ func TestPromNullByteHandling(t *testing.T) {
 		},
 		{
 			input: "a{b=\x00\"ssss\"} 1\n",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\x00\" (\"INVALID\") while parsing: \"a{b=\\x00\"",
 		},
 		{
 			input: "a{b=\"\x00",
-			err:   "expected label value, got \"INVALID\"",
+			err:   "expected label value, got \"\\\"\\x00\\n\" (\"INVALID\") while parsing: \"a{b=\\\"\\x00\\n\"",
 		},
 		{
 			input: "a{b\x00=\"hiih\"}	1",
-			err: "expected equal, got \"INVALID\"",
+			err:   "expected equal, got \"\\x00\" (\"INVALID\") while parsing: \"a{b\\x00\"",
 		},
 		{
 			input: "a\x00{b=\"ddd\"} 1",
-			err:   "expected value after metric, got \"MNAME\"",
+			err:   "expected value after metric, got \"\\x00\" (\"INVALID\") while parsing: \"a\\x00\"",
+		},
+		{
+			input: "a 0 1\x00",
+			err:   "expected next entry after timestamp, got \"\\x00\" (\"INVALID\") while parsing: \"a 0 1\\x00\"",
 		},
 	}
 
 	for i, c := range cases {
-		p := NewPromParser([]byte(c.input))
+		p := NewPromParser([]byte(c.input), labels.NewSymbolTable())
 		var err error
 		for err == nil {
 			_, err = p.Next()
@@ -352,7 +474,7 @@ const (
 )
 
 func BenchmarkParse(b *testing.B) {
-	for parserName, parser := range map[string]func([]byte) Parser{
+	for parserName, parser := range map[string]func([]byte, *labels.SymbolTable) Parser{
 		"prometheus":  NewPromParser,
 		"openmetrics": NewOpenMetricsParser,
 	} {
@@ -361,25 +483,26 @@ func BenchmarkParse(b *testing.B) {
 			require.NoError(b, err)
 			defer f.Close()
 
-			buf, err := ioutil.ReadAll(f)
+			buf, err := io.ReadAll(f)
 			require.NoError(b, err)
 
 			b.Run(parserName+"/no-decode-metric/"+fn, func(b *testing.B) {
 				total := 0
 
-				b.SetBytes(int64(len(buf) * (b.N / promtestdataSampleCount)))
+				b.SetBytes(int64(len(buf) / promtestdataSampleCount))
 				b.ReportAllocs()
 				b.ResetTimer()
 
+				st := labels.NewSymbolTable()
 				for i := 0; i < b.N; i += promtestdataSampleCount {
-					p := parser(buf)
+					p := parser(buf, st)
 
 				Outer:
 					for i < b.N {
 						t, err := p.Next()
 						switch t {
 						case EntryInvalid:
-							if err == io.EOF {
+							if errors.Is(err, io.EOF) {
 								break Outer
 							}
 							b.Fatal(err)
@@ -395,26 +518,27 @@ func BenchmarkParse(b *testing.B) {
 			b.Run(parserName+"/decode-metric/"+fn, func(b *testing.B) {
 				total := 0
 
-				b.SetBytes(int64(len(buf) * (b.N / promtestdataSampleCount)))
+				b.SetBytes(int64(len(buf) / promtestdataSampleCount))
 				b.ReportAllocs()
 				b.ResetTimer()
 
+				st := labels.NewSymbolTable()
 				for i := 0; i < b.N; i += promtestdataSampleCount {
-					p := parser(buf)
+					p := parser(buf, st)
 
 				Outer:
 					for i < b.N {
 						t, err := p.Next()
 						switch t {
 						case EntryInvalid:
-							if err == io.EOF {
+							if errors.Is(err, io.EOF) {
 								break Outer
 							}
 							b.Fatal(err)
 						case EntrySeries:
 							m, _, _ := p.Series()
 
-							res := make(labels.Labels, 0, 5)
+							var res labels.Labels
 							p.Metric(&res)
 
 							total += len(m)
@@ -426,21 +550,22 @@ func BenchmarkParse(b *testing.B) {
 			})
 			b.Run(parserName+"/decode-metric-reuse/"+fn, func(b *testing.B) {
 				total := 0
-				res := make(labels.Labels, 0, 5)
+				var res labels.Labels
 
-				b.SetBytes(int64(len(buf) * (b.N / promtestdataSampleCount)))
+				b.SetBytes(int64(len(buf) / promtestdataSampleCount))
 				b.ReportAllocs()
 				b.ResetTimer()
 
+				st := labels.NewSymbolTable()
 				for i := 0; i < b.N; i += promtestdataSampleCount {
-					p := parser(buf)
+					p := parser(buf, st)
 
 				Outer:
 					for i < b.N {
 						t, err := p.Next()
 						switch t {
 						case EntryInvalid:
-							if err == io.EOF {
+							if errors.Is(err, io.EOF) {
 								break Outer
 							}
 							b.Fatal(err)
@@ -451,14 +576,16 @@ func BenchmarkParse(b *testing.B) {
 
 							total += len(m)
 							i++
-							res = res[:0]
 						}
 					}
 				}
 				_ = total
 			})
 			b.Run("expfmt-text/"+fn, func(b *testing.B) {
-				b.SetBytes(int64(len(buf) * (b.N / promtestdataSampleCount)))
+				if parserName != "prometheus" {
+					b.Skip()
+				}
+				b.SetBytes(int64(len(buf) / promtestdataSampleCount))
 				b.ReportAllocs()
 				b.ResetTimer()
 
@@ -467,7 +594,7 @@ func BenchmarkParse(b *testing.B) {
 				for i := 0; i < b.N; i += promtestdataSampleCount {
 					decSamples := make(model.Vector, 0, 50)
 					sdec := expfmt.SampleDecoder{
-						Dec: expfmt.NewDecoder(bytes.NewReader(buf), expfmt.FmtText),
+						Dec: expfmt.NewDecoder(bytes.NewReader(buf), expfmt.NewFormat(expfmt.TypeTextPlain)),
 						Opts: &expfmt.DecodeOptions{
 							Timestamp: model.TimeFromUnixNano(0),
 						},
@@ -501,13 +628,13 @@ func BenchmarkGzip(b *testing.B) {
 			require.NoError(b, err)
 			require.NoError(b, gw.Close())
 
-			gbuf, err := ioutil.ReadAll(&buf)
+			gbuf, err := io.ReadAll(&buf)
 			require.NoError(b, err)
 
 			k := b.N / promtestdataSampleCount
 
 			b.ReportAllocs()
-			b.SetBytes(int64(k) * int64(n))
+			b.SetBytes(n / promtestdataSampleCount)
 			b.ResetTimer()
 
 			total := 0
@@ -516,7 +643,7 @@ func BenchmarkGzip(b *testing.B) {
 				gr, err := gzip.NewReader(bytes.NewReader(gbuf))
 				require.NoError(b, err)
 
-				d, err := ioutil.ReadAll(gr)
+				d, err := io.ReadAll(gr)
 				require.NoError(b, err)
 				require.NoError(b, gr.Close())
 

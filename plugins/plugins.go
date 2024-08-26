@@ -40,6 +40,9 @@ import (
 	// Register hetzner plugin.
 	_ "github.com/prometheus/prometheus/discovery/hetzner"
 
+	// Register ionos plugin.
+	_ "github.com/prometheus/prometheus/discovery/ionos"
+
 	// Register kubernetes plugin.
 	_ "github.com/prometheus/prometheus/discovery/kubernetes"
 
@@ -52,8 +55,14 @@ import (
 	// Register moby plugin.
 	_ "github.com/prometheus/prometheus/discovery/moby"
 
+	// Register nomad plugin.
+	_ "github.com/prometheus/prometheus/discovery/nomad"
+
 	// Register openstack plugin.
 	_ "github.com/prometheus/prometheus/discovery/openstack"
+
+	// Register ovhcloud plugin.
+	_ "github.com/prometheus/prometheus/discovery/ovhcloud"
 
 	// Register puppetdb plugin.
 	_ "github.com/prometheus/prometheus/discovery/puppetdb"
@@ -66,6 +75,9 @@ import (
 
 	// Register uyuni plugin.
 	_ "github.com/prometheus/prometheus/discovery/uyuni"
+
+	// Register vultr plugin.
+	_ "github.com/prometheus/prometheus/discovery/vultr"
 
 	// Register xds plugin.
 	_ "github.com/prometheus/prometheus/discovery/xds"

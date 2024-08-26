@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -53,8 +52,8 @@ type dbAdapter struct {
 	*tsdb.DB
 }
 
-func (a *dbAdapter) Stats(statsByLabelName string) (*tsdb.Stats, error) {
-	return a.Head().Stats(statsByLabelName), nil
+func (a *dbAdapter) Stats(statsByLabelName string, limit int) (*tsdb.Stats, error) {
+	return a.Head().Stats(statsByLabelName, limit), nil
 }
 
 func (a *dbAdapter) WALReplayStatus() (tsdb.WALReplayStatus, error) {
@@ -127,10 +126,20 @@ func TestReadyAndHealthy(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	cleanupTestResponse(t, resp)
 
+	resp, err = http.Head(baseURL + "/-/healthy")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	cleanupTestResponse(t, resp)
+
 	for _, u := range []string{
 		baseURL + "/-/ready",
 	} {
 		resp, err = http.Get(u)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+		cleanupTestResponse(t, resp)
+
+		resp, err = http.Head(u)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 		cleanupTestResponse(t, resp)
@@ -147,13 +156,18 @@ func TestReadyAndHealthy(t *testing.T) {
 	cleanupTestResponse(t, resp)
 
 	// Set to ready.
-	webHandler.Ready()
+	webHandler.SetReady(true)
 
 	for _, u := range []string{
 		baseURL + "/-/healthy",
 		baseURL + "/-/ready",
 	} {
 		resp, err = http.Get(u)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		cleanupTestResponse(t, resp)
+
+		resp, err = http.Head(u)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		cleanupTestResponse(t, resp)
@@ -246,7 +260,7 @@ func TestRoutePrefix(t *testing.T) {
 	cleanupTestResponse(t, resp)
 
 	// Set to ready.
-	webHandler.Ready()
+	webHandler.SetReady(true)
 
 	resp, err = http.Get(baseURL + opts.RoutePrefix + "/-/healthy")
 	require.NoError(t, err)
@@ -293,11 +307,11 @@ func TestDebugHandler(t *testing.T) {
 			},
 		}
 		handler := New(nil, opts)
-		handler.Ready()
+		handler.SetReady(true)
 
 		w := httptest.NewRecorder()
 
-		req, err := http.NewRequest("GET", tc.url, nil)
+		req, err := http.NewRequest(http.MethodGet, tc.url, nil)
 
 		require.NoError(t, err)
 
@@ -321,7 +335,7 @@ func TestHTTPMetrics(t *testing.T) {
 		t.Helper()
 		w := httptest.NewRecorder()
 
-		req, err := http.NewRequest("GET", "/-/ready", nil)
+		req, err := http.NewRequest(http.MethodGet, "/-/ready", nil)
 		require.NoError(t, err)
 
 		handler.router.ServeHTTP(w, req)
@@ -330,16 +344,28 @@ func TestHTTPMetrics(t *testing.T) {
 
 	code := getReady()
 	require.Equal(t, http.StatusServiceUnavailable, code)
+	ready := handler.metrics.readyStatus
+	require.Equal(t, 0, int(prom_testutil.ToFloat64(ready)))
 	counter := handler.metrics.requestCounter
 	require.Equal(t, 1, int(prom_testutil.ToFloat64(counter.WithLabelValues("/-/ready", strconv.Itoa(http.StatusServiceUnavailable)))))
 
-	handler.Ready()
+	handler.SetReady(true)
 	for range [2]int{} {
 		code = getReady()
 		require.Equal(t, http.StatusOK, code)
 	}
+	require.Equal(t, 1, int(prom_testutil.ToFloat64(ready)))
 	require.Equal(t, 2, int(prom_testutil.ToFloat64(counter.WithLabelValues("/-/ready", strconv.Itoa(http.StatusOK)))))
 	require.Equal(t, 1, int(prom_testutil.ToFloat64(counter.WithLabelValues("/-/ready", strconv.Itoa(http.StatusServiceUnavailable)))))
+
+	handler.SetReady(false)
+	for range [2]int{} {
+		code = getReady()
+		require.Equal(t, http.StatusServiceUnavailable, code)
+	}
+	require.Equal(t, 0, int(prom_testutil.ToFloat64(ready)))
+	require.Equal(t, 2, int(prom_testutil.ToFloat64(counter.WithLabelValues("/-/ready", strconv.Itoa(http.StatusOK)))))
+	require.Equal(t, 3, int(prom_testutil.ToFloat64(counter.WithLabelValues("/-/ready", strconv.Itoa(http.StatusServiceUnavailable)))))
 }
 
 func TestShutdownWithStaleConnection(t *testing.T) {
@@ -414,7 +440,7 @@ func TestShutdownWithStaleConnection(t *testing.T) {
 	select {
 	case <-closed:
 	case <-time.After(timeout + 5*time.Second):
-		t.Fatalf("Server still running after read timeout.")
+		require.FailNow(t, "Server still running after read timeout.")
 	}
 }
 
@@ -476,7 +502,7 @@ func TestHandleMultipleQuitRequests(t *testing.T) {
 	select {
 	case <-closed:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("Server still running after 5 seconds.")
+		require.FailNow(t, "Server still running after 5 seconds.")
 	}
 }
 
@@ -511,7 +537,7 @@ func TestAgentAPIEndPoints(t *testing.T) {
 	opts.Flags = map[string]string{}
 
 	webHandler := New(nil, opts)
-	webHandler.Ready()
+	webHandler.SetReady(true)
 	webHandler.config = &config.Config{}
 	webHandler.notifier = &notifier.Manager{}
 	l, err := webHandler.Listener()
@@ -555,6 +581,9 @@ func TestAgentAPIEndPoints(t *testing.T) {
 			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+			t.Cleanup(func() {
+				require.NoError(t, resp.Body.Close())
+			})
 		}
 	}
 
@@ -573,12 +602,15 @@ func TestAgentAPIEndPoints(t *testing.T) {
 			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
+			t.Cleanup(func() {
+				require.NoError(t, resp.Body.Close())
+			})
 		}
 	}
 }
 
 func cleanupTestResponse(t *testing.T, resp *http.Response) {
-	_, err := io.Copy(ioutil.Discard, resp.Body)
+	_, err := io.Copy(io.Discard, resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 }
@@ -589,7 +621,7 @@ func cleanupSnapshot(t *testing.T, dbDir string, resp *http.Response) {
 			Name string `json:"name"`
 		} `json:"data"`
 	}{}
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(b, snapshot))
 	require.NotZero(t, snapshot.Data.Name, "snapshot directory not returned")

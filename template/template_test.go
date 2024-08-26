@@ -17,11 +17,13 @@ import (
 	"context"
 	"math"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 )
@@ -37,6 +39,12 @@ func TestTemplateExpansion(t *testing.T) {
 			// Simple value.
 			text:   "{{ 1 }}",
 			output: "1",
+		},
+		{
+			// Native histogram value.
+			text:   "{{ . | value }}",
+			input:  &sample{Value: &histogram.FloatHistogram{Count: 3, Sum: 10}},
+			output: (&histogram.FloatHistogram{Count: 3, Sum: 10}).String(),
 		},
 		{
 			// Non-ASCII space (not allowed in text/template, see https://github.com/golang/go/blob/master/src/text/template/parse/lex.go#L98)
@@ -69,7 +77,7 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			text:        "{{ query \"1.5\" | first | value }}",
 			output:      "1.5",
-			queryResult: promql.Vector{{Point: promql.Point{T: 0, V: 1.5}}},
+			queryResult: promql.Vector{{T: 0, F: 1.5}},
 		},
 		{
 			// Get value from query.
@@ -77,10 +85,23 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "11",
+		},
+		{
+			// Get value of a native histogram from query.
+			text: "{{ query \"metric{instance='a'}\" | first | value }}",
+			queryResult: promql.Vector{
+				{
+					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
+					T:      0,
+					H:      &histogram.FloatHistogram{Count: 3, Sum: 10},
+				},
+			},
+			output: (&histogram.FloatHistogram{Count: 3, Sum: 10}).String(),
 		},
 		{
 			// Get label from query.
@@ -89,7 +110,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a",
@@ -100,7 +122,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "__value__", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a",
@@ -111,7 +134,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -122,7 +146,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -132,7 +157,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -144,10 +170,12 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "b"),
-					Point:  promql.Point{T: 0, V: 21},
+					T:      0,
+					F:      21,
 				}, {
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a:11: b:21: ",
@@ -430,6 +458,16 @@ func TestTemplateExpansion(t *testing.T) {
 			output: "2015-06-23 13:19:44.128 +0000 UTC",
 		},
 		{
+			// ToTime - model.SampleValue input - float64.
+			text:   `{{ (1435065584.128 | toTime).Format "2006" }}`,
+			output: "2015",
+		},
+		{
+			// ToTime - model.SampleValue input - string.
+			text:   `{{ ("1435065584.128" | toTime).Format "2006" }}`,
+			output: "2015",
+		},
+		{
 			// Title.
 			text:   "{{ \"aa bb CC\" | title }}",
 			output: "Aa Bb CC",
@@ -480,6 +518,41 @@ func TestTemplateExpansion(t *testing.T) {
 			text:   "{{ printf \"%0.2f\" (parseDuration \"1h2m10ms\") }}",
 			output: "3720.01",
 		},
+		{
+			// Simple hostname.
+			text:   "{{ \"foo.example.com\" | stripDomain }}",
+			output: "foo",
+		},
+		{
+			// Hostname with port.
+			text:   "{{ \"foo.example.com:12345\" | stripDomain }}",
+			output: "foo:12345",
+		},
+		{
+			// Simple IPv4 address.
+			text:   "{{ \"192.0.2.1\" | stripDomain }}",
+			output: "192.0.2.1",
+		},
+		{
+			// IPv4 address with port.
+			text:   "{{ \"192.0.2.1:12345\" | stripDomain }}",
+			output: "192.0.2.1:12345",
+		},
+		{
+			// Simple IPv6 address.
+			text:   "{{ \"2001:0DB8::1\" | stripDomain }}",
+			output: "2001:0DB8::1",
+		},
+		{
+			// IPv6 address with port.
+			text:   "{{ \"[2001:0DB8::1]:12345\" | stripDomain }}",
+			output: "[2001:0DB8::1]:12345",
+		},
+		{
+			// Value can't be split into host and port.
+			text:   "{{ \"[2001:0DB8::1]::12345\" | stripDomain }}",
+			output: "[2001:0DB8::1]::12345",
+		},
 	})
 }
 
@@ -523,5 +596,57 @@ func testTemplateExpansion(t *testing.T, scenarios []scenario) {
 		if err == nil {
 			require.Equal(t, s.output, result)
 		}
+	}
+}
+
+func Test_floatToTime(t *testing.T) {
+	type args struct {
+		v float64
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    *time.Time
+		wantErr bool
+	}{
+		{
+			"happy path",
+			args{
+				v: 1657155181,
+			},
+			func() *time.Time {
+				tm := time.Date(2022, 7, 7, 0, 53, 1, 0, time.UTC)
+				return &tm
+			}(),
+			false,
+		},
+		{
+			"more than math.MaxInt64",
+			args{
+				v: 1.79769313486231570814527423731704356798070e+300,
+			},
+			nil,
+			true,
+		},
+		{
+			"less than math.MinInt64",
+			args{
+				v: -1.79769313486231570814527423731704356798070e+300,
+			},
+			nil,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := floatToTime(tt.args.v)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("floatToTime() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("floatToTime() got = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

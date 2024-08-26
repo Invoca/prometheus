@@ -21,7 +21,7 @@
     // If you run Prometheus on Kubernetes with the Prometheus
     // Operator, you can make use of the configured target labels for
     // nicer naming:
-    // prometheusNameTemplate: '{{$labels.namespace}}/{{$labels.pod}}'
+    // prometheusName: '{{$labels.namespace}}/{{$labels.pod}}'
 
     // prometheusHAGroupName is inserted into annotations to name an
     // HA group. All labels used here must also be present in
@@ -44,5 +44,10 @@
       // The default refresh time for all dashboards, default to 60s
       refresh: '60s',
     },
+
+    // Opt-out of multi-cluster dashboards by overriding this.
+    showMultiCluster: true,
+    // The cluster label to infer the cluster name from.
+    clusterLabel: 'cluster',
   },
 }

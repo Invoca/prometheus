@@ -16,18 +16,18 @@ package tsdb
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 )
 
 func Example() {
 	// Create a random dir to work in.  Open() doesn't require a pre-existing dir, but
 	// we want to make sure not to make a mess where we shouldn't.
-	dir, err := ioutil.TempDir("", "tsdb-test")
+	dir, err := os.MkdirTemp("", "tsdb-test")
 	noErr(err)
 
 	// Open a TSDB for reading and/or writing.
@@ -59,16 +59,16 @@ func Example() {
 	// ... adding more samples.
 
 	// Open a querier for reading.
-	querier, err := db.Querier(context.Background(), math.MinInt64, math.MaxInt64)
+	querier, err := db.Querier(math.MinInt64, math.MaxInt64)
 	noErr(err)
-	ss := querier.Select(false, nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	ss := querier.Select(context.Background(), false, nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
 
 	for ss.Next() {
 		series := ss.At()
 		fmt.Println("series:", series.Labels().String())
 
-		it := series.Iterator()
-		for it.Next() {
+		it := series.Iterator(nil)
+		for it.Next() == chunkenc.ValFloat {
 			_, v := it.At() // We ignore the timestamp here, only to have a predictable output we can test against (below)
 			fmt.Println("sample", v)
 		}

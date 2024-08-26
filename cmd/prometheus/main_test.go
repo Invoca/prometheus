@@ -16,26 +16,33 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
+	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/notifier"
 	"github.com/prometheus/prometheus/rules"
 )
+
+const startupTime = 10 * time.Second
 
 var (
 	promPath    = os.Args[0]
@@ -117,16 +124,14 @@ func TestFailedStartupExitCode(t *testing.T) {
 	fakeInputFile := "fake-input-file"
 	expectedExitStatus := 2
 
-	prom := exec.Command(promPath, "-test.main", "--config.file="+fakeInputFile)
+	prom := exec.Command(promPath, "-test.main", "--web.listen-address=0.0.0.0:0", "--config.file="+fakeInputFile)
 	err := prom.Run()
 	require.Error(t, err)
 
-	if exitError, ok := err.(*exec.ExitError); ok {
-		status := exitError.Sys().(syscall.WaitStatus)
-		require.Equal(t, expectedExitStatus, status.ExitStatus())
-	} else {
-		t.Errorf("unable to retrieve the exit status for prometheus: %v", err)
-	}
+	var exitError *exec.ExitError
+	require.ErrorAs(t, err, &exitError)
+	status := exitError.Sys().(syscall.WaitStatus)
+	require.Equal(t, expectedExitStatus, status.ExitStatus())
 }
 
 type senderFunc func(alerts ...*notifier.Alert)
@@ -143,8 +148,8 @@ func TestSendAlerts(t *testing.T) {
 		{
 			in: []*rules.Alert{
 				{
-					Labels:      []labels.Label{{Name: "l1", Value: "v1"}},
-					Annotations: []labels.Label{{Name: "a2", Value: "v2"}},
+					Labels:      labels.FromStrings("l1", "v1"),
+					Annotations: labels.FromStrings("a2", "v2"),
 					ActiveAt:    time.Unix(1, 0),
 					FiredAt:     time.Unix(2, 0),
 					ValidUntil:  time.Unix(3, 0),
@@ -152,8 +157,8 @@ func TestSendAlerts(t *testing.T) {
 			},
 			exp: []*notifier.Alert{
 				{
-					Labels:       []labels.Label{{Name: "l1", Value: "v1"}},
-					Annotations:  []labels.Label{{Name: "a2", Value: "v2"}},
+					Labels:       labels.FromStrings("l1", "v1"),
+					Annotations:  labels.FromStrings("a2", "v2"),
 					StartsAt:     time.Unix(2, 0),
 					EndsAt:       time.Unix(3, 0),
 					GeneratorURL: "http://localhost:9090/graph?g0.expr=up&g0.tab=1",
@@ -163,8 +168,8 @@ func TestSendAlerts(t *testing.T) {
 		{
 			in: []*rules.Alert{
 				{
-					Labels:      []labels.Label{{Name: "l1", Value: "v1"}},
-					Annotations: []labels.Label{{Name: "a2", Value: "v2"}},
+					Labels:      labels.FromStrings("l1", "v1"),
+					Annotations: labels.FromStrings("a2", "v2"),
 					ActiveAt:    time.Unix(1, 0),
 					FiredAt:     time.Unix(2, 0),
 					ResolvedAt:  time.Unix(4, 0),
@@ -172,8 +177,8 @@ func TestSendAlerts(t *testing.T) {
 			},
 			exp: []*notifier.Alert{
 				{
-					Labels:       []labels.Label{{Name: "l1", Value: "v1"}},
-					Annotations:  []labels.Label{{Name: "a2", Value: "v2"}},
+					Labels:       labels.FromStrings("l1", "v1"),
+					Annotations:  labels.FromStrings("a2", "v2"),
 					StartsAt:     time.Unix(2, 0),
 					EndsAt:       time.Unix(4, 0),
 					GeneratorURL: "http://localhost:9090/graph?g0.expr=up&g0.tab=1",
@@ -187,14 +192,12 @@ func TestSendAlerts(t *testing.T) {
 
 	for i, tc := range testCases {
 		tc := tc
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			senderFunc := senderFunc(func(alerts ...*notifier.Alert) {
-				if len(tc.in) == 0 {
-					t.Fatalf("sender called with 0 alert")
-				}
+				require.NotEmpty(t, tc.in, "sender called with 0 alert")
 				require.Equal(t, tc.exp, alerts)
 			})
-			sendAlerts(senderFunc, "http://localhost:9090")(context.TODO(), "up", tc.in...)
+			rules.SendAlerts(senderFunc, "http://localhost:9090")(context.TODO(), "up", tc.in...)
 		})
 	}
 }
@@ -211,7 +214,7 @@ func TestWALSegmentSizeBounds(t *testing.T) {
 		stderr, err := prom.StderrPipe()
 		require.NoError(t, err)
 		go func() {
-			slurp, _ := ioutil.ReadAll(stderr)
+			slurp, _ := io.ReadAll(stderr)
 			t.Log(string(slurp))
 		}()
 
@@ -223,8 +226,8 @@ func TestWALSegmentSizeBounds(t *testing.T) {
 			go func() { done <- prom.Wait() }()
 			select {
 			case err := <-done:
-				t.Errorf("prometheus should be still running: %v", err)
-			case <-time.After(5 * time.Second):
+				require.Fail(t, "prometheus should be still running: %v", err)
+			case <-time.After(startupTime):
 				prom.Process.Kill()
 				<-done
 			}
@@ -233,12 +236,10 @@ func TestWALSegmentSizeBounds(t *testing.T) {
 
 		err = prom.Wait()
 		require.Error(t, err)
-		if exitError, ok := err.(*exec.ExitError); ok {
-			status := exitError.Sys().(syscall.WaitStatus)
-			require.Equal(t, expectedExitStatus, status.ExitStatus())
-		} else {
-			t.Errorf("unable to retrieve the exit status for prometheus: %v", err)
-		}
+		var exitError *exec.ExitError
+		require.ErrorAs(t, err, &exitError)
+		status := exitError.Sys().(syscall.WaitStatus)
+		require.Equal(t, expectedExitStatus, status.ExitStatus())
 	}
 }
 
@@ -256,7 +257,7 @@ func TestMaxBlockChunkSegmentSizeBounds(t *testing.T) {
 		stderr, err := prom.StderrPipe()
 		require.NoError(t, err)
 		go func() {
-			slurp, _ := ioutil.ReadAll(stderr)
+			slurp, _ := io.ReadAll(stderr)
 			t.Log(string(slurp))
 		}()
 
@@ -268,8 +269,8 @@ func TestMaxBlockChunkSegmentSizeBounds(t *testing.T) {
 			go func() { done <- prom.Wait() }()
 			select {
 			case err := <-done:
-				t.Errorf("prometheus should be still running: %v", err)
-			case <-time.After(5 * time.Second):
+				require.Fail(t, "prometheus should be still running: %v", err)
+			case <-time.After(startupTime):
 				prom.Process.Kill()
 				<-done
 			}
@@ -278,12 +279,10 @@ func TestMaxBlockChunkSegmentSizeBounds(t *testing.T) {
 
 		err = prom.Wait()
 		require.Error(t, err)
-		if exitError, ok := err.(*exec.ExitError); ok {
-			status := exitError.Sys().(syscall.WaitStatus)
-			require.Equal(t, expectedExitStatus, status.ExitStatus())
-		} else {
-			t.Errorf("unable to retrieve the exit status for prometheus: %v", err)
-		}
+		var exitError *exec.ExitError
+		require.ErrorAs(t, err, &exitError)
+		status := exitError.Sys().(syscall.WaitStatus)
+		require.Equal(t, expectedExitStatus, status.ExitStatus())
 	}
 }
 
@@ -339,11 +338,9 @@ func getCurrentGaugeValuesFor(t *testing.T, reg prometheus.Gatherer, metricNames
 				continue
 			}
 
-			require.Equal(t, 1, len(g.GetMetric()))
-			if _, ok := res[m]; ok {
-				t.Error("expected only one metric family for", m)
-				t.FailNow()
-			}
+			require.Len(t, g.GetMetric(), 1)
+			_, ok := res[m]
+			require.False(t, ok, "expected only one metric family for", m)
 			res[m] = *g.GetMetric()[0].GetGauge().Value
 		}
 	}
@@ -351,7 +348,7 @@ func getCurrentGaugeValuesFor(t *testing.T, reg prometheus.Gatherer, metricNames
 }
 
 func TestAgentSuccessfulStartup(t *testing.T) {
-	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--config.file="+agentConfig)
+	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--web.listen-address=0.0.0.0:0", "--config.file="+agentConfig)
 	require.NoError(t, prom.Start())
 
 	actualExitStatus := 0
@@ -362,14 +359,14 @@ func TestAgentSuccessfulStartup(t *testing.T) {
 	case err := <-done:
 		t.Logf("prometheus agent should be still running: %v", err)
 		actualExitStatus = prom.ProcessState.ExitCode()
-	case <-time.After(5 * time.Second):
+	case <-time.After(startupTime):
 		prom.Process.Kill()
 	}
 	require.Equal(t, 0, actualExitStatus)
 }
 
 func TestAgentFailedStartupWithServerFlag(t *testing.T) {
-	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--storage.tsdb.path=.", "--config.file="+promConfig)
+	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--storage.tsdb.path=.", "--web.listen-address=0.0.0.0:0", "--config.file="+promConfig)
 
 	output := bytes.Buffer{}
 	prom.Stderr = &output
@@ -383,7 +380,7 @@ func TestAgentFailedStartupWithServerFlag(t *testing.T) {
 	case err := <-done:
 		t.Logf("prometheus agent should not be running: %v", err)
 		actualExitStatus = prom.ProcessState.ExitCode()
-	case <-time.After(5 * time.Second):
+	case <-time.After(startupTime):
 		prom.Process.Kill()
 	}
 
@@ -396,7 +393,7 @@ func TestAgentFailedStartupWithServerFlag(t *testing.T) {
 }
 
 func TestAgentFailedStartupWithInvalidConfig(t *testing.T) {
-	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--config.file="+promConfig)
+	prom := exec.Command(promPath, "-test.main", "--enable-feature=agent", "--web.listen-address=0.0.0.0:0", "--config.file="+promConfig)
 	require.NoError(t, prom.Start())
 
 	actualExitStatus := 0
@@ -407,7 +404,7 @@ func TestAgentFailedStartupWithInvalidConfig(t *testing.T) {
 	case err := <-done:
 		t.Logf("prometheus agent should not be running: %v", err)
 		actualExitStatus = prom.ProcessState.ExitCode()
-	case <-time.After(5 * time.Second):
+	case <-time.After(startupTime):
 		prom.Process.Kill()
 	}
 	require.Equal(t, 2, actualExitStatus)
@@ -431,7 +428,7 @@ func TestModeSpecificFlags(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(fmt.Sprintf("%s mode with option %s", tc.mode, tc.arg), func(t *testing.T) {
-			args := []string{"-test.main", tc.arg, t.TempDir()}
+			args := []string{"-test.main", tc.arg, t.TempDir(), "--web.listen-address=0.0.0.0:0"}
 
 			if tc.mode == "agent" {
 				args = append(args, "--enable-feature=agent", "--config.file="+agentConfig)
@@ -445,7 +442,7 @@ func TestModeSpecificFlags(t *testing.T) {
 			stderr, err := prom.StderrPipe()
 			require.NoError(t, err)
 			go func() {
-				slurp, _ := ioutil.ReadAll(stderr)
+				slurp, _ := io.ReadAll(stderr)
 				t.Log(string(slurp))
 			}()
 
@@ -458,7 +455,7 @@ func TestModeSpecificFlags(t *testing.T) {
 				select {
 				case err := <-done:
 					t.Errorf("prometheus should be still running: %v", err)
-				case <-time.After(5 * time.Second):
+				case <-time.After(startupTime):
 					prom.Process.Kill()
 					<-done
 				}
@@ -467,11 +464,101 @@ func TestModeSpecificFlags(t *testing.T) {
 
 			err = prom.Wait()
 			require.Error(t, err)
-			if exitError, ok := err.(*exec.ExitError); ok {
+			var exitError *exec.ExitError
+			if errors.As(err, &exitError) {
 				status := exitError.Sys().(syscall.WaitStatus)
 				require.Equal(t, tc.exitStatus, status.ExitStatus())
 			} else {
 				t.Errorf("unable to retrieve the exit status for prometheus: %v", err)
+			}
+		})
+	}
+}
+
+func TestDocumentation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.SkipNow()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, promPath, "-test.main", "--write-documentation")
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() != 0 {
+			fmt.Println("Command failed with non-zero exit code")
+		}
+	}
+
+	generatedContent := strings.ReplaceAll(stdout.String(), filepath.Base(promPath), strings.TrimSuffix(filepath.Base(promPath), ".test"))
+
+	expectedContent, err := os.ReadFile(filepath.Join("..", "..", "docs", "command-line", "prometheus.md"))
+	require.NoError(t, err)
+
+	require.Equal(t, string(expectedContent), generatedContent, "Generated content does not match documentation. Hint: run `make cli-documentation`.")
+}
+
+func TestRwProtoMsgFlagParser(t *testing.T) {
+	defaultOpts := config.RemoteWriteProtoMsgs{
+		config.RemoteWriteProtoMsgV1, config.RemoteWriteProtoMsgV2,
+	}
+
+	for _, tcase := range []struct {
+		args        []string
+		expected    []config.RemoteWriteProtoMsg
+		expectedErr error
+	}{
+		{
+			args:     nil,
+			expected: defaultOpts,
+		},
+		{
+			args:        []string{"--test-proto-msgs", "test"},
+			expectedErr: errors.New("unknown remote write protobuf message test, supported: prometheus.WriteRequest, io.prometheus.write.v2.Request"),
+		},
+		{
+			args:     []string{"--test-proto-msgs", "io.prometheus.write.v2.Request"},
+			expected: config.RemoteWriteProtoMsgs{config.RemoteWriteProtoMsgV2},
+		},
+		{
+			args: []string{
+				"--test-proto-msgs", "io.prometheus.write.v2.Request",
+				"--test-proto-msgs", "io.prometheus.write.v2.Request",
+			},
+			expectedErr: errors.New("duplicated io.prometheus.write.v2.Request flag value, got [io.prometheus.write.v2.Request] already"),
+		},
+		{
+			args: []string{
+				"--test-proto-msgs", "io.prometheus.write.v2.Request",
+				"--test-proto-msgs", "prometheus.WriteRequest",
+			},
+			expected: config.RemoteWriteProtoMsgs{config.RemoteWriteProtoMsgV2, config.RemoteWriteProtoMsgV1},
+		},
+		{
+			args: []string{
+				"--test-proto-msgs", "io.prometheus.write.v2.Request",
+				"--test-proto-msgs", "prometheus.WriteRequest",
+				"--test-proto-msgs", "io.prometheus.write.v2.Request",
+			},
+			expectedErr: errors.New("duplicated io.prometheus.write.v2.Request flag value, got [io.prometheus.write.v2.Request prometheus.WriteRequest] already"),
+		},
+	} {
+		t.Run(strings.Join(tcase.args, ","), func(t *testing.T) {
+			a := kingpin.New("test", "")
+			var opt []config.RemoteWriteProtoMsg
+			a.Flag("test-proto-msgs", "").Default(defaultOpts.Strings()...).SetValue(rwProtoMsgFlagValue(&opt))
+
+			_, err := a.Parse(tcase.args)
+			if tcase.expectedErr != nil {
+				require.Error(t, err)
+				require.Equal(t, tcase.expectedErr, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tcase.expected, opt)
 			}
 		})
 	}

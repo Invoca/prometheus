@@ -17,38 +17,37 @@ import {
   AggregateExpr,
   And,
   BinaryExpr,
-  BinModifiers,
-  Bool,
+  BoolModifier,
   Bottomk,
   CountValues,
   Eql,
   EqlSingle,
-  Expr,
   FunctionCall,
-  FunctionCallArgs,
   FunctionCallBody,
   Gte,
   Gtr,
   Identifier,
-  LabelMatcher,
   LabelMatchers,
-  LabelMatchList,
+  LimitK,
+  LimitRatio,
   Lss,
   Lte,
   MatrixSelector,
-  MetricIdentifier,
   Neq,
   Or,
   ParenExpr,
   Quantile,
+  QuotedLabelMatcher,
+  QuotedLabelName,
   StepInvariantExpr,
   SubqueryExpr,
   Topk,
   UnaryExpr,
   Unless,
+  UnquotedLabelMatcher,
   VectorSelector,
-} from 'lezer-promql';
-import { containsAtLeastOneChild, retrieveAllRecursiveNodes, walkThrough } from './path-finder';
+} from '@prometheus-io/lezer-promql';
+import { containsAtLeastOneChild } from './path-finder';
 import { getType } from './type';
 import { buildLabelMatchers } from './matcher';
 import { EditorState } from '@codemirror/state';
@@ -105,8 +104,6 @@ export class Parser {
       return ValueType.none;
     }
     switch (node.type.id) {
-      case Expr:
-        return this.checkAST(node.firstChild);
       case AggregateExpr:
         this.checkAggregationExpr(node);
         break;
@@ -117,28 +114,28 @@ export class Parser {
         this.checkCallFunction(node);
         break;
       case ParenExpr:
-        this.checkAST(walkThrough(node, Expr));
+        this.checkAST(node.getChild('Expr'));
         break;
       case UnaryExpr:
-        const unaryExprType = this.checkAST(walkThrough(node, Expr));
+        const unaryExprType = this.checkAST(node.getChild('Expr'));
         if (unaryExprType !== ValueType.scalar && unaryExprType !== ValueType.vector) {
           this.addDiagnostic(node, `unary expression only allowed on expressions of type scalar or instant vector, got ${unaryExprType}`);
         }
         break;
       case SubqueryExpr:
-        const subQueryExprType = this.checkAST(walkThrough(node, Expr));
+        const subQueryExprType = this.checkAST(node.getChild('Expr'));
         if (subQueryExprType !== ValueType.vector) {
           this.addDiagnostic(node, `subquery is only allowed on instant vector, got ${subQueryExprType} in ${node.name} instead`);
         }
         break;
       case MatrixSelector:
-        this.checkAST(walkThrough(node, Expr));
+        this.checkAST(node.getChild('Expr'));
         break;
       case VectorSelector:
         this.checkVectorSelector(node);
         break;
       case StepInvariantExpr:
-        const exprValue = this.checkAST(walkThrough(node, Expr));
+        const exprValue = this.checkAST(node.getChild('Expr'));
         if (exprValue !== ValueType.vector && exprValue !== ValueType.matrix) {
           this.addDiagnostic(node, `@ modifier must be preceded by an instant selector vector or range vector selector or a subquery`);
         }
@@ -164,27 +161,25 @@ export class Parser {
       this.addDiagnostic(node, 'aggregation operator expected in aggregation expression but got nothing');
       return;
     }
-    const expr = walkThrough(node, FunctionCallBody, FunctionCallArgs, Expr);
-    if (!expr) {
+    const body = node.getChild(FunctionCallBody);
+    const params = body ? body.getChildren('Expr') : [];
+    if (!params.length) {
       this.addDiagnostic(node, 'unable to find the parameter for the expression');
       return;
     }
-    this.expectType(expr, ValueType.vector, 'aggregation expression');
+    this.expectType(params[params.length - 1], ValueType.vector, 'aggregation expression');
     // get the parameter of the aggregation operator
-    const params = walkThrough(node, FunctionCallBody, FunctionCallArgs, FunctionCallArgs, Expr);
-    if (aggregateOp.type.id === Topk || aggregateOp.type.id === Bottomk || aggregateOp.type.id === Quantile) {
-      if (!params) {
-        this.addDiagnostic(node, 'no parameter found');
-        return;
-      }
-      this.expectType(params, ValueType.scalar, 'aggregation parameter');
+    if (
+      aggregateOp.type.id === Topk ||
+      aggregateOp.type.id === Bottomk ||
+      aggregateOp.type.id === LimitK ||
+      aggregateOp.type.id === LimitRatio ||
+      aggregateOp.type.id === Quantile
+    ) {
+      this.expectType(params[0], ValueType.scalar, 'aggregation parameter');
     }
     if (aggregateOp.type.id === CountValues) {
-      if (!params) {
-        this.addDiagnostic(node, 'no parameter found');
-        return;
-      }
-      this.expectType(params, ValueType.string, 'aggregation parameter');
+      this.expectType(params[0], ValueType.string, 'aggregation parameter');
     }
   }
 
@@ -200,7 +195,7 @@ export class Parser {
     }
     const lt = this.checkAST(lExpr);
     const rt = this.checkAST(rExpr);
-    const boolModifierUsed = walkThrough(node, BinModifiers, Bool);
+    const boolModifierUsed = node.getChild(BoolModifier);
     const isComparisonOperator = containsAtLeastOneChild(node, Eql, Neq, Lte, Lss, Gte, Gtr);
     const isSetOperator = containsAtLeastOneChild(node, And, Or, Unless);
 
@@ -259,7 +254,8 @@ export class Parser {
       return;
     }
 
-    const args = retrieveAllRecursiveNodes(walkThrough(node, FunctionCallBody), FunctionCallArgs, Expr);
+    const body = node.getChild(FunctionCallBody);
+    const args = body ? body.getChildren('Expr') : [];
     const funcSignature = getFunction(funcID.type.id);
     const nargs = funcSignature.argTypes.length;
 
@@ -295,14 +291,16 @@ export class Parser {
   }
 
   private checkVectorSelector(node: SyntaxNode): void {
-    const labelMatchers = buildLabelMatchers(
-      retrieveAllRecursiveNodes(walkThrough(node, LabelMatchers, LabelMatchList), LabelMatchList, LabelMatcher),
-      this.state
-    );
+    const matchList = node.getChild(LabelMatchers);
+    const labelMatcherOpts = [QuotedLabelName, QuotedLabelMatcher, UnquotedLabelMatcher];
+    let labelMatchers: Matcher[] = [];
+    for (const labelMatcherOpt of labelMatcherOpts) {
+      labelMatchers = labelMatchers.concat(buildLabelMatchers(matchList ? matchList.getChildren(labelMatcherOpt) : [], this.state));
+    }
     let vectorSelectorName = '';
-    // VectorSelector ( MetricIdentifier ( Identifier ) )
+    // VectorSelector ( Identifier )
     // https://github.com/promlabs/lezer-promql/blob/71e2f9fa5ae6f5c5547d5738966cd2512e6b99a8/src/promql.grammar#L200
-    const vectorSelectorNodeName = walkThrough(node, MetricIdentifier, Identifier);
+    const vectorSelectorNodeName = node.getChild(Identifier);
     if (vectorSelectorNodeName) {
       vectorSelectorName = this.state.sliceDoc(vectorSelectorNodeName.from, vectorSelectorNodeName.to);
     }
@@ -317,6 +315,14 @@ export class Parser {
       // adding the metric name as a Matcher to avoid a false positive for this kind of expression:
       // foo{bare=''}
       labelMatchers.push(new Matcher(EqlSingle, '__name__', vectorSelectorName));
+    } else {
+      // In this case when metric name is not set outside the braces
+      // It is checking whether metric name is set twice like in :
+      // {__name__:"foo", "foo"}, {"foo", "bar"}
+      const labelMatchersMetricName = labelMatchers.filter((lm) => lm.name === '__name__');
+      if (labelMatchersMetricName.length > 1) {
+        this.addDiagnostic(node, `metric name must not be set twice: ${labelMatchersMetricName[0].value} or ${labelMatchersMetricName[1].value}`);
+      }
     }
 
     // A Vector selector must contain at least one non-empty matcher to prevent

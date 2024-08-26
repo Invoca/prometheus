@@ -18,7 +18,7 @@ The primary data structure for dealing with time series data is the sample, defi
 ```go
 type sample struct {
         Labels map[string]string
-        Value  float64
+        Value  interface{}
 }
 ```
 
@@ -44,20 +44,21 @@ If functions are used in a pipeline, the pipeline value is passed as the last ar
 | query         | query string  | []sample | Queries the database, does not support returning range vectors.  |
 | first         | []sample      | sample   | Equivalent to `index a 0`  |
 | label         | label, sample | string   | Equivalent to `index sample.Labels label`  |
-| value         | sample        | float64  | Equivalent to `sample.Value`  |
+| value         | sample        | interface{}  | Equivalent to `sample.Value`  |
 | sortByLabel   | label, []samples | []sample | Sorts the samples by the given label. Is stable.  |
 
 `first`, `label` and `value` are intended to make query results easily usable in pipelines.
 
 ### Numbers
 
-| Name               | Arguments        | Returns |  Notes    |
-| ------------------ | -----------------| --------| --------- |
-| humanize           | number or string | string  | Converts a number to a more readable format, using [metric prefixes](https://en.wikipedia.org/wiki/Metric_prefix).
-| humanize1024       | number or string | string  | Like `humanize`, but uses 1024 as the base rather than 1000. |
-| humanizeDuration   | number or string | string  | Converts a duration in seconds to a more readable format. |
-| humanizePercentage | number or string | string  | Converts a ratio value to a fraction of 100. |
-| humanizeTimestamp  | number or string | string  | Converts a Unix timestamp in seconds to a more readable format. |
+| Name                | Arguments        | Returns |  Notes    |
+|---------------------| -----------------| --------| --------- |
+| humanize            | number or string | string  | Converts a number to a more readable format, using [metric prefixes](https://en.wikipedia.org/wiki/Metric_prefix).
+| humanize1024        | number or string | string  | Like `humanize`, but uses 1024 as the base rather than 1000. |
+| humanizeDuration    | number or string | string  | Converts a duration in seconds to a more readable format. |
+| humanizePercentage  | number or string | string  | Converts a ratio value to a fraction of 100. |
+| humanizeTimestamp   | number or string | string     | Converts a Unix timestamp in seconds to a more readable format. |
+| toTime              | number or string | *time.Time | Converts a Unix timestamp in seconds to a time.Time.            |
 
 Humanizing functions are intended to produce reasonable output for consumption
 by humans, and are not guaranteed to return the same results between Prometheus
@@ -76,6 +77,7 @@ versions.
 | graphLink  | expr | string | Returns path to graph view in the [expression browser](https://prometheus.io/docs/visualization/browser/) for the expression. |
 | tableLink  | expr | string | Returns path to tabular ("Table") view in the [expression browser](https://prometheus.io/docs/visualization/browser/) for the expression. |
 | parseDuration | string | float | Parses a duration string such as "1h" into the number of seconds it represents. |
+| stripDomain | string | string | Removes the domain part of a FQDN. Leaves port untouched. |
 
 ### Others
 
@@ -84,6 +86,7 @@ versions.
 | args          | []interface{} | map[string]interface{} | This converts a list of objects to a map with keys arg0, arg1 etc. This is intended to allow multiple arguments to be passed to templates. |
 | tmpl          | string, []interface{} | nothing  | Like the built-in `template`, but allows non-literals as the template name. Note that the result is assumed to be safe, and will not be auto-escaped. Only available in consoles. |
 | safeHtml      | string        | string  | Marks string as HTML not requiring auto-escaping. |
+| externalURL   | _none_        | string  | The external URL under which Prometheus is externally reachable. |
 | pathPrefix    | _none_        | string  | The external URL [path](https://pkg.go.dev/net/url#URL) for use in console templates. |
 
 ## Template type differences

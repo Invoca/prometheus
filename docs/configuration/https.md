@@ -44,6 +44,13 @@ tls_server_config:
   # CA certificate for client certificate authentication to the server.
   [ client_ca_file: <filename> ]
 
+  # Verify that the client certificate has a Subject Alternate Name (SAN)
+  # which is an exact match to an entry in this list, else terminate the
+  # connection. SAN match can be one or multiple of the following: DNS,
+  # IP, e-mail, or URI address from https://pkg.go.dev/crypto/x509#Certificate.
+  [ client_allowed_sans:
+    [ - <string> ] ]
+
   # Minimum TLS version that is acceptable.
   [ min_version: <string> | default = "TLS12" ]
 
@@ -54,6 +61,9 @@ tls_server_config:
   # Go default cipher suites are used. Available cipher suites are documented
   # in the go documentation:
   # https://golang.org/pkg/crypto/tls/#pkg-constants
+  #
+  # Note that only the cipher returned by the following function are supported:
+  # https://pkg.go.dev/crypto/tls#CipherSuites
   [ cipher_suites:
     [ - <string> ] ]
 
@@ -61,7 +71,7 @@ tls_server_config:
   # client's most preferred ciphersuite, or the server's most preferred
   # ciphersuite. If true then the server's preference, as expressed in
   # the order of elements in cipher_suites, is used.
-  [ prefer_server_cipher_suites: <bool> | default = true ]
+  [ prefer_server_cipher_suites: <boolean> | default = true ]
 
   # Elliptic curves that will be used in an ECDHE handshake, in preference
   # order. Available curves are documented in the go documentation:
@@ -87,7 +97,7 @@ http_server_config:
     # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
     [ X-Content-Type-Options: <string> ]
     # Set the X-XSS-Protection header to all responses.
-    # Unset if blank. Accepted value is nosniff.
+    # Unset if blank.
     # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-XSS-Protection
     [ X-XSS-Protection: <string> ]
     # Set the Strict-Transport-Security header to HTTP responses.

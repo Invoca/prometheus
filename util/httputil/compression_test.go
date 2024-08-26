@@ -15,13 +15,13 @@ package httputil
 
 import (
 	"bytes"
-	"compress/gzip"
-	"compress/zlib"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zlib"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,7 +64,7 @@ func TestCompressionHandler_PlainText(t *testing.T) {
 	resp, err := client.Get(server.URL + "/foo_endpoint")
 	require.NoError(t, err, "client get failed with unexpected error")
 	defer resp.Body.Close()
-	contents, err := ioutil.ReadAll(resp.Body)
+	contents, err := io.ReadAll(resp.Body)
 	require.NoError(t, err, "unexpected error while creating the response body reader")
 
 	expected := "Hello World!"
@@ -85,7 +85,7 @@ func TestCompressionHandler_Gzip(t *testing.T) {
 		},
 	}
 
-	req, _ := http.NewRequest("GET", server.URL+"/foo_endpoint", nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/foo_endpoint", nil)
 	req.Header.Set(acceptEncodingHeader, gzipEncoding)
 
 	resp, err := client.Do(req)
@@ -120,7 +120,7 @@ func TestCompressionHandler_Deflate(t *testing.T) {
 		},
 	}
 
-	req, _ := http.NewRequest("GET", server.URL+"/foo_endpoint", nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/foo_endpoint", nil)
 	req.Header.Set(acceptEncodingHeader, deflateEncoding)
 
 	resp, err := client.Do(req)

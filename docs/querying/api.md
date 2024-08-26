@@ -25,8 +25,10 @@ Other non-`2xx` codes may be returned for errors occurring before the API
 endpoint is reached.
 
 An array of warnings may be returned if there are errors that do
-not inhibit the request execution. All of the data that was successfully
-collected will be returned in the data field.
+not inhibit the request execution. An additional array of info-level
+annotations may be returned for potential query issues that may or may
+not be false positives. All of the data that was successfully collected
+will be returned in the data field.
 
 The JSON response envelope format is as follows:
 
@@ -40,9 +42,11 @@ The JSON response envelope format is as follows:
   "errorType": "<string>",
   "error": "<string>",
 
-  // Only if there were warnings while executing the request.
+  // Only set if there were warnings while executing the request.
   // There will still be data in the data field.
-  "warnings": ["<string>"]
+  "warnings": ["<string>"],
+  // Only set if there were info-level annnotations while executing the request.
+  "infos": ["<string>"]
 }
 ```
 
@@ -55,7 +59,7 @@ timestamps are always represented as Unix timestamps in seconds.
 * `<series_selector>`: Prometheus [time series
 selectors](basics.md#time-series-selectors) like `http_requests_total` or
 `http_requests_total{method=~"(GET|POST)"}` and need to be URL-encoded.
-* `<duration>`: [Prometheus duration strings](basics.md#time_durations).
+* `<duration>`: [Prometheus duration strings](basics.md#time-durations).
 For example, `5m` refers to a duration of 5 minutes.
 * `<bool>`: boolean values (strings `true` and `false`).
 
@@ -206,6 +210,35 @@ $ curl 'http://localhost:9090/api/v1/query_range?query=up&start=2015-07-01T20:10
 }
 ```
 
+## Formatting query expressions
+
+The following endpoint formats a PromQL expression in a prettified way:
+
+```
+GET /api/v1/format_query
+POST /api/v1/format_query
+```
+
+URL query parameters:
+
+- `query=<string>`: Prometheus expression query string.
+
+You can URL-encode these parameters directly in the request body by using the `POST` method and
+`Content-Type: application/x-www-form-urlencoded` header. This is useful when specifying a large
+query that may breach server-side URL character limits.
+
+The `data` section of the query result is a string containing the formatted query expression. Note that any comments are removed in the formatted string.
+
+The following example formats the expression `foo/bar`:
+
+```json
+$ curl 'http://localhost:9090/api/v1/format_query?query=foo/bar'
+{
+   "status" : "success",
+   "data" : "foo / bar"
+}
+```
+
 ## Querying metadata
 
 Prometheus offers a set of API endpoints to query metadata about series and their labels.
@@ -227,6 +260,7 @@ URL query parameters:
   series to return. At least one `match[]` argument must be provided.
 - `start=<rfc3339 | unix_timestamp>`: Start timestamp.
 - `end=<rfc3339 | unix_timestamp>`: End timestamp.
+- `limit=<number>`: Maximum number of returned series. Optional.
 
 You can URL-encode these parameters directly in the request body by using the `POST` method and
 `Content-Type: application/x-www-form-urlencoded` header. This is useful when specifying a large
@@ -277,6 +311,7 @@ URL query parameters:
 - `end=<rfc3339 | unix_timestamp>`: End timestamp. Optional.
 - `match[]=<series_selector>`: Repeated series selector argument that selects the
   series from which to read the label names. Optional.
+- `limit=<number>`: Maximum number of returned series. Optional.
 
 
 The `data` section of the JSON response is a list of string label names.
@@ -327,6 +362,7 @@ URL query parameters:
 - `end=<rfc3339 | unix_timestamp>`: End timestamp. Optional.
 - `match[]=<series_selector>`: Repeated series selector argument that selects the
   series from which to read the label values. Optional.
+- `limit=<number>`: Maximum number of returned series. Optional.
 
 
 The `data` section of the JSON response is a list of string label values.
@@ -375,10 +411,10 @@ $ curl -g 'http://localhost:9090/api/v1/query_exemplars?query=test_exemplar_metr
             "exemplars": [
                 {
                     "labels": {
-                        "traceID": "EpTxMJ40fUus7aGY"
+                        "trace_id": "EpTxMJ40fUus7aGY"
                     },
                     "value": "6",
-                    "timestamp": 1600096945.479,
+                    "timestamp": 1600096945.479
                 }
             ]
         },
@@ -392,18 +428,18 @@ $ curl -g 'http://localhost:9090/api/v1/query_exemplars?query=test_exemplar_metr
             "exemplars": [
                 {
                     "labels": {
-                        "traceID": "Olp9XHlq763ccsfa"
+                        "trace_id": "Olp9XHlq763ccsfa"
                     },
                     "value": "19",
-                    "timestamp": 1600096955.479,
+                    "timestamp": 1600096955.479
                 },
                 {
                     "labels": {
-                        "traceID": "hCtjygkIHwAN9vs4"
+                        "trace_id": "hCtjygkIHwAN9vs4"
                     },
                     "value": "20",
-                    "timestamp": 1600096965.489,
-                },
+                    "timestamp": 1600096965.489
+                }
             ]
         }
     ]
@@ -418,6 +454,10 @@ sample values. JSON does not support special float values such as `NaN`, `Inf`,
 and `-Inf`, so sample values are transferred as quoted JSON strings rather than
 raw numbers.
 
+The keys `"histogram"` and `"histograms"` only show up if the experimental
+native histograms are present in the response. Their placeholder `<histogram>`
+is explained in detail in its own section below.
+
 ### Range vectors
 
 Range vectors are returned as result type `matrix`. The corresponding
@@ -427,11 +467,18 @@ Range vectors are returned as result type `matrix`. The corresponding
 [
   {
     "metric": { "<label_name>": "<label_value>", ... },
-    "values": [ [ <unix_time>, "<sample_value>" ], ... ]
+    "values": [ [ <unix_time>, "<sample_value>" ], ... ],
+    "histograms": [ [ <unix_time>, <histogram> ], ... ]
   },
   ...
 ]
 ```
+
+Each series could have the `"values"` key, or the `"histograms"` key, or both.
+For a given timestamp, there will only be one sample of either float or histogram type.
+
+Series are returned sorted by `metric`. Functions such as [`sort`](functions.md#sort)
+and [`sort_by_label`](functions.md#sort_by_label) have no effect for range vectors.
 
 ### Instant vectors
 
@@ -442,11 +489,18 @@ Instant vectors are returned as result type `vector`. The corresponding
 [
   {
     "metric": { "<label_name>": "<label_value>", ... },
-    "value": [ <unix_time>, "<sample_value>" ]
+    "value": [ <unix_time>, "<sample_value>" ],
+    "histogram": [ <unix_time>, <histogram> ]
   },
   ...
 ]
 ```
+
+Each series could have the `"value"` key, or the `"histogram"` key, but not both.
+
+Series are not guaranteed to be returned in any particular order unless a function
+such as [`sort`](functions.md#sort) or [`sort_by_label`](functions.md#sort_by_label)`
+is used.
 
 ### Scalars
 
@@ -466,6 +520,33 @@ String results are returned as result type `string`. The corresponding
 [ <unix_time>, "<string_value>" ]
 ```
 
+### Native histograms
+
+The `<histogram>` placeholder used above is formatted as follows.
+
+_Note that native histograms are an experimental feature, and the format below
+might still change._
+
+```
+{
+  "count": "<count_of_observations>",
+  "sum": "<sum_of_observations>",
+  "buckets": [ [ <boundary_rule>, "<left_boundary>", "<right_boundary>", "<count_in_bucket>" ], ... ]
+}
+```
+
+The `<boundary_rule>` placeholder is an integer between 0 and 3 with the
+following meaning:
+
+* 0: “open left” (left boundary is exclusive, right boundary in inclusive)
+* 1: “open right” (left boundary is inclusive, right boundary in exclusive)
+* 2: “open both” (both boundaries are exclusive)
+* 3: “closed both” (both boundaries are inclusive)
+
+Note that with the currently implemented bucket schemas, positive buckets are
+“open left”, negative buckets are “open right”, and the zero bucket (with a
+negative left boundary and a positive right boundary) is “closed both”.
+
 ## Targets
 
 The following endpoint returns an overview of the current state of the
@@ -476,8 +557,9 @@ GET /api/v1/targets
 ```
 
 Both the active and dropped targets are part of the response by default.
-`labels` represents the label set after relabelling has occurred.
-`discoveredLabels` represent the unmodified labels retrieved during service discovery before relabelling has occurred.
+Dropped targets are subject to `keep_dropped_targets` limit, if set.
+`labels` represents the label set after relabeling has occurred.
+`discoveredLabels` represent the unmodified labels retrieved during service discovery before relabeling has occurred.
 
 ```json
 $ curl http://localhost:9090/api/v1/targets
@@ -559,6 +641,38 @@ $ curl 'http://localhost:9090/api/v1/targets?state=active'
 }
 ```
 
+The `scrapePool` query parameter allows the caller to filter by scrape pool name.
+
+```json
+$ curl 'http://localhost:9090/api/v1/targets?scrapePool=node_exporter'
+{
+  "status": "success",
+  "data": {
+    "activeTargets": [
+      {
+        "discoveredLabels": {
+          "__address__": "127.0.0.1:9091",
+          "__metrics_path__": "/metrics",
+          "__scheme__": "http",
+          "job": "node_exporter"
+        },
+        "labels": {
+          "instance": "127.0.0.1:9091",
+          "job": "node_exporter"
+        },
+        "scrapePool": "node_exporter",
+        "scrapeUrl": "http://127.0.0.1:9091/metrics",
+        "globalUrl": "http://example-prometheus:9091/metrics",
+        "lastError": "",
+        "lastScrape": "2017-01-17T15:07:44.723715405+01:00",
+        "lastScrapeDuration": 50688943,
+        "health": "up"
+      }
+    ],
+    "droppedTargets": []
+  }
+}
+```
 
 ## Rules
 
@@ -574,7 +688,13 @@ GET /api/v1/rules
 ```
 
 URL query parameters:
+
 - `type=alert|record`: return only the alerting rules (e.g. `type=alert`) or the recording rules (e.g. `type=record`). When the parameter is absent or empty, no filtering is done.
+- `rule_name[]=<string>`: only return rules with the given rule name. If the parameter is repeated, rules with any of the provided names are returned. If we've filtered out all the rules of a group, the group is not returned. When the parameter is absent or empty, no filtering is done.
+- `rule_group[]=<string>`: only return rules with the given rule group name. If the parameter is repeated, rules with any of the provided rule group names are returned. When the parameter is absent or empty, no filtering is done.
+- `file[]=<string>`: only return rules with the given filepath. If the parameter is repeated, rules with any of the provided filepaths are returned. When the parameter is absent or empty, no filtering is done.
+- `exclude_alerts=<bool>`: only return rules, do not return active alerts. 
+- `match[]=<label_selector>`: only return rules that have configured labels that satisfy the label selectors. If the parameter is repeated, rules that match any of the sets of label selectors are returned. Note that matching is on the labels in the definition of each rule, not on the values after template expansion (for alerting rules). Optional.
 
 ```json
 $ curl http://localhost:9090/api/v1/rules
@@ -750,7 +870,7 @@ curl -G http://localhost:9091/api/v1/targets/metadata \
 
 ## Querying metric metadata
 
-It returns metadata about metrics currently scrapped from targets. However, it does not provide any target information.
+It returns metadata about metrics currently scraped from targets. However, it does not provide any target information.
 This is considered **experimental** and might change in the future.
 
 ```
@@ -760,6 +880,7 @@ GET /api/v1/metadata
 URL query parameters:
 
 - `limit=<number>`: Maximum number of metrics to return.
+- `limit_per_metric=<number>`: Maximum number of metadata to return per metric.
 - `metric=<string>`: A metric name to filter metadata for. All metric metadata is retrieved if left empty.
 
 The `data` section of the query result consists of an object where each key is a metric name and each value is a list of unique metadata objects, as exposed for that metric name across all targets.
@@ -788,6 +909,32 @@ curl -G http://localhost:9090/api/v1/metadata?limit=2
       {
         "type": "counter",
         "help": "Amount of HTTP requests",
+        "unit": ""
+      }
+    ]
+  }
+}
+```
+
+The following example returns only one metadata entry for each metric.
+
+```json
+curl -G http://localhost:9090/api/v1/metadata?limit_per_metric=1
+
+{
+  "status": "success",
+  "data": {
+    "cortex_ring_tokens": [
+      {
+        "type": "gauge",
+        "help": "Number of tokens in the ring",
+        "unit": ""
+      }
+    ],
+    "http_requests_total": [
+      {
+        "type": "counter",
+        "help": "Number of HTTP requests",
         "unit": ""
       }
     ]
@@ -971,6 +1118,10 @@ The following endpoint returns various cardinality statistics about the Promethe
 ```
 GET /api/v1/status/tsdb
 ```
+URL query parameters:
+- `limit=<number>`: Limit the number of returned items to a given number for each set of statistics. By default, 10 items are returned.
+
+The `data` section of the query result consists of
 - **headStats**: This provides the following data about the head block of the TSDB:
   - **numSeries**: The number of series.
   - **chunkCount**: The number of chunks.
@@ -1160,3 +1311,16 @@ Enable the remote write receiver by setting
 endpoint is `/api/v1/write`. Find more details [here](../storage.md#overview).
 
 *New in v2.33*
+
+## OTLP Receiver
+
+Prometheus can be configured as a receiver for the OTLP Metrics protocol. This
+is not considered an efficient way of ingesting samples. Use it
+with caution for specific low-volume use cases. It is not suitable for
+replacing the ingestion via scraping.
+
+Enable the OTLP receiver by the feature flag
+`--enable-feature=otlp-write-receiver`. When enabled, the OTLP receiver
+endpoint is `/api/v1/otlp/v1/metrics`.
+
+*New in v2.47*

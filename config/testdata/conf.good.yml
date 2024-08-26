@@ -2,11 +2,20 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 30s
+  body_size_limit: 15MB
+  sample_limit: 1500
+  target_limit: 30
+  label_limit: 30
+  label_name_length_limit: 200
+  label_value_length_limit: 200
   # scrape_timeout is set to the global default (10s).
 
   external_labels:
     monitor: codelab
     foo: bar
+
+runtime:
+  gogc: 42
 
 rule_files:
   - "first.rules"
@@ -28,6 +37,7 @@ remote_write:
         key_file: valid_key_file
 
   - url: http://remote2/push
+    protobuf_message: io.prometheus.write.v2.Request
     name: rw_tls
     tls_config:
       cert_file: valid_cert_file
@@ -87,6 +97,12 @@ scrape_configs:
       - regex:
         replacement: static
         target_label: abc
+      - source_labels: [foo]
+        target_label: abc
+        action: keepequal
+      - source_labels: [foo]
+        target_label: abc
+        action: dropequal
 
     authorization:
       credentials_file: valid_token_file
@@ -102,9 +118,14 @@ scrape_configs:
 
     scrape_interval: 50s
     scrape_timeout: 5s
+    scrape_protocols: ["PrometheusText0.0.4"]
 
     body_size_limit: 10MB
     sample_limit: 1000
+    target_limit: 35
+    label_limit: 35
+    label_name_length_limit: 210
+    label_value_length_limit: 210
 
     metrics_path: /my_path
     scheme: https
@@ -145,6 +166,7 @@ scrape_configs:
     consul_sd_configs:
       - server: "localhost:1234"
         token: mysecret
+        path_prefix: /consul
         services: ["nginx", "cache", "mysql"]
         tags: ["canary", "v1"]
         node_meta:
@@ -203,6 +225,7 @@ scrape_configs:
 
     kuma_sd_configs:
       - server: http://kuma-control-plane.kuma-system.svc:5676
+        client_id: main-prometheus
 
   - job_name: service-marathon
     marathon_sd_configs:
@@ -213,6 +236,10 @@ scrape_configs:
         tls_config:
           cert_file: valid_cert_file
           key_file: valid_key_file
+
+  - job_name: service-nomad
+    nomad_sd_configs:
+      - server: 'http://localhost:4646'
 
   - job_name: service-ec2
     ec2_sd_configs:
@@ -328,6 +355,10 @@ scrape_configs:
           key_file: valid_key_file
 
   - job_name: hetzner
+    relabel_configs:
+      - action: uppercase
+        source_labels: [instance]
+        target_label: instance
     hetzner_sd_configs:
       - role: hcloud
         authorization:
@@ -340,6 +371,21 @@ scrape_configs:
   - job_name: service-eureka
     eureka_sd_configs:
       - server: "http://eureka.example.com:8761/eureka"
+
+  - job_name: ovhcloud
+    ovhcloud_sd_configs:
+      - service: vps
+        endpoint: ovh-eu
+        application_key: testAppKey
+        application_secret: testAppSecret
+        consumer_key: testConsumerKey
+        refresh_interval: 1m
+      - service: dedicated_server
+        endpoint: ovh-eu
+        application_key: testAppKey
+        application_secret: testAppSecret
+        consumer_key: testConsumerKey
+        refresh_interval: 1m
 
   - job_name: scaleway
     scaleway_sd_configs:
@@ -363,6 +409,17 @@ scrape_configs:
         username: gopher
         password: hole
 
+  - job_name: ionos
+    ionos_sd_configs:
+      - datacenter_id: 8feda53f-15f0-447f-badf-ebe32dad2fc0
+        authorization:
+          credentials: abcdef
+
+  - job_name: vultr
+    vultr_sd_configs:
+      - authorization:
+          credentials: abcdef
+
 alerting:
   alertmanagers:
     - scheme: https
@@ -371,6 +428,10 @@ alerting:
             - "1.2.3.4:9093"
             - "1.2.3.5:9093"
             - "1.2.3.6:9093"
+
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
 
 tracing:
   endpoint: "localhost:4317"

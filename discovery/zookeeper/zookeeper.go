@@ -16,6 +16,7 @@ package zookeeper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -24,7 +25,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-zookeeper/zk"
-	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/prometheus/discovery"
@@ -56,6 +57,11 @@ type ServersetSDConfig struct {
 	Timeout model.Duration `yaml:"timeout,omitempty"`
 }
 
+// NewDiscovererMetrics implements discovery.Config.
+func (*ServersetSDConfig) NewDiscovererMetrics(reg prometheus.Registerer, rmi discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
+	return &discovery.NoopDiscovererMetrics{}
+}
+
 // Name returns the name of the Config.
 func (*ServersetSDConfig) Name() string { return "serverset" }
 
@@ -80,7 +86,7 @@ func (c *ServersetSDConfig) UnmarshalYAML(unmarshal func(interface{}) error) err
 	}
 	for _, path := range c.Paths {
 		if !strings.HasPrefix(path, "/") {
-			return errors.Errorf("serverset SD config paths must begin with '/': %s", path)
+			return fmt.Errorf("serverset SD config paths must begin with '/': %s", path)
 		}
 	}
 	return nil
@@ -91,6 +97,11 @@ type NerveSDConfig struct {
 	Servers []string       `yaml:"servers"`
 	Paths   []string       `yaml:"paths"`
 	Timeout model.Duration `yaml:"timeout,omitempty"`
+}
+
+// NewDiscovererMetrics implements discovery.Config.
+func (*NerveSDConfig) NewDiscovererMetrics(reg prometheus.Registerer, rmi discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
+	return &discovery.NoopDiscovererMetrics{}
 }
 
 // Name returns the name of the Config.
@@ -117,7 +128,7 @@ func (c *NerveSDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	for _, path := range c.Paths {
 		if !strings.HasPrefix(path, "/") {
-			return errors.Errorf("nerve SD config paths must begin with '/': %s", path)
+			return fmt.Errorf("nerve SD config paths must begin with '/': %s", path)
 		}
 	}
 	return nil
@@ -263,24 +274,23 @@ func parseServersetMember(data []byte, path string) (model.LabelSet, error) {
 	member := serversetMember{}
 
 	if err := json.Unmarshal(data, &member); err != nil {
-		return nil, errors.Wrapf(err, "error unmarshaling serverset member %q", path)
+		return nil, fmt.Errorf("error unmarshaling serverset member %q: %w", path, err)
 	}
 
 	labels := model.LabelSet{}
 	labels[serversetPathLabel] = model.LabelValue(path)
 	labels[model.AddressLabel] = model.LabelValue(
-		net.JoinHostPort(member.ServiceEndpoint.Host, fmt.Sprintf("%d", member.ServiceEndpoint.Port)))
+		net.JoinHostPort(member.ServiceEndpoint.Host, strconv.Itoa(member.ServiceEndpoint.Port)))
 
 	labels[serversetEndpointLabelPrefix+"_host"] = model.LabelValue(member.ServiceEndpoint.Host)
-	labels[serversetEndpointLabelPrefix+"_port"] = model.LabelValue(fmt.Sprintf("%d", member.ServiceEndpoint.Port))
+	labels[serversetEndpointLabelPrefix+"_port"] = model.LabelValue(strconv.Itoa(member.ServiceEndpoint.Port))
 
 	for name, endpoint := range member.AdditionalEndpoints {
 		cleanName := model.LabelName(strutil.SanitizeLabelName(name))
 		labels[serversetEndpointLabelPrefix+"_host_"+cleanName] = model.LabelValue(
 			endpoint.Host)
 		labels[serversetEndpointLabelPrefix+"_port_"+cleanName] = model.LabelValue(
-			fmt.Sprintf("%d", endpoint.Port))
-
+			strconv.Itoa(endpoint.Port))
 	}
 
 	labels[serversetStatusLabel] = model.LabelValue(member.Status)
@@ -305,16 +315,16 @@ func parseNerveMember(data []byte, path string) (model.LabelSet, error) {
 	member := nerveMember{}
 	err := json.Unmarshal(data, &member)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error unmarshaling nerve member %q", path)
+		return nil, fmt.Errorf("error unmarshaling nerve member %q: %w", path, err)
 	}
 
 	labels := model.LabelSet{}
 	labels[nervePathLabel] = model.LabelValue(path)
 	labels[model.AddressLabel] = model.LabelValue(
-		net.JoinHostPort(member.Host, fmt.Sprintf("%d", member.Port)))
+		net.JoinHostPort(member.Host, strconv.Itoa(member.Port)))
 
 	labels[nerveEndpointLabelPrefix+"_host"] = model.LabelValue(member.Host)
-	labels[nerveEndpointLabelPrefix+"_port"] = model.LabelValue(fmt.Sprintf("%d", member.Port))
+	labels[nerveEndpointLabelPrefix+"_port"] = model.LabelValue(strconv.Itoa(member.Port))
 	labels[nerveEndpointLabelPrefix+"_name"] = model.LabelValue(member.Name)
 
 	return labels, nil

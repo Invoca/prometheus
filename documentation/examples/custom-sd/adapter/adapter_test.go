@@ -15,13 +15,14 @@ package adapter
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
+	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 )
 
@@ -223,10 +224,17 @@ func TestGenerateTargetGroups(t *testing.T) {
 // TestWriteOutput checks the adapter can write a file to disk.
 func TestWriteOutput(t *testing.T) {
 	ctx := context.Background()
-	tmpfile, err := ioutil.TempFile("", "sd_adapter_test")
+	tmpfile, err := os.CreateTemp("", "sd_adapter_test")
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 	tmpfile.Close()
-	adapter := NewAdapter(ctx, tmpfile.Name(), "test_sd", nil, nil)
+	require.NoError(t, err)
+
+	reg := prometheus.NewRegistry()
+	refreshMetrics := discovery.NewRefreshMetrics(reg)
+	sdMetrics, err := discovery.RegisterSDMetrics(reg, refreshMetrics)
+	require.NoError(t, err)
+
+	adapter := NewAdapter(ctx, tmpfile.Name(), "test_sd", nil, nil, sdMetrics, reg)
 	require.NoError(t, adapter.writeOutput())
 }

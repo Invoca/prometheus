@@ -114,6 +114,37 @@ Operations between vectors attempt to find a matching element in the right-hand 
 vector for each entry in the left-hand side. There are two basic types of
 matching behavior: One-to-one and many-to-one/one-to-many.
 
+### Vector matching keywords
+
+These vector matching keywords allow for matching between series with different label sets
+providing:
+
+* `on`
+* `ignoring`
+
+Label lists provided to matching keywords will determine how vectors are combined. Examples
+can be found in [One-to-one vector matches](#one-to-one-vector-matches) and in
+[Many-to-one and one-to-many vector matches](#many-to-one-and-one-to-many-vector-matches)
+
+### Group modifiers
+
+These group modifiers enable many-to-one/one-to-many vector matching:
+
+* `group_left`
+* `group_right`
+
+Label lists can be provided to the group modifier which contain labels from the "one"-side to
+be included in the result metrics.
+
+_Many-to-one and one-to-many matching are advanced use cases that should be carefully considered.
+Often a proper use of `ignoring(<labels>)` provides the desired outcome._
+
+_Grouping modifiers can only be used for
+[comparison](#comparison-binary-operators) and
+[arithmetic](#arithmetic-binary-operators). Operations as `and`, `unless` and
+`or` operations match with all possible entries in the right vector by
+default._
+
 ### One-to-one vector matches
 
 **One-to-one** finds a unique pair of entries from each side of the operation.
@@ -153,7 +184,7 @@ The entries with methods `put` and `del` have no match and will not show up in t
 
 **Many-to-one** and **one-to-many** matchings refer to the case where each vector element on
 the "one"-side can match with multiple elements on the "many"-side. This has to
-be explicitly requested using the `group_left` or `group_right` modifier, where
+be explicitly requested using the `group_left` or `group_right` [modifiers](#group-modifiers), where
 left/right determines which vector has the higher cardinality.
 
     <vector expr> <bin-op> ignoring(<label list>) group_left(<label list>) <vector expr>
@@ -161,16 +192,10 @@ left/right determines which vector has the higher cardinality.
     <vector expr> <bin-op> on(<label list>) group_left(<label list>) <vector expr>
     <vector expr> <bin-op> on(<label list>) group_right(<label list>) <vector expr>
 
-The label list provided with the group modifier contains additional labels from
+The label list provided with the [group modifier](#group-modifiers) contains additional labels from
 the "one"-side to be included in the result metrics. For `on` a label can only
 appear in one of the lists. Every time series of the result vector must be
 uniquely identifiable.
-
-_Grouping modifiers can only be used for
-[comparison](#comparison-binary-operators) and
-[arithmetic](#arithmetic-binary-operators). Operations as `and`, `unless` and
-`or` operations match with all possible entries in the right vector by
-default._
 
 Example query:
 
@@ -186,8 +211,6 @@ left:
     {method="post", code="500"} 0.05            //   6 / 120
     {method="post", code="404"} 0.175           //  21 / 120
 
-_Many-to-one and one-to-many matching are advanced use cases that should be carefully considered.
-Often a proper use of `ignoring(<labels>)` provides the desired outcome._
 
 ## Aggregation operators
 
@@ -207,6 +230,8 @@ vector of fewer elements with aggregated values:
 * `bottomk` (smallest k elements by sample value)
 * `topk` (largest k elements by sample value)
 * `quantile` (calculate φ-quantile (0 ≤ φ ≤ 1) over dimensions)
+* `limitk` (sample n elements)
+* `limit_ratio` (sample elements with approximately 𝑟 ratio if `𝑟 > 0`, and the complement of such samples if `𝑟 = -(1.0 - 𝑟)`)
 
 These operators can either be used to aggregate over **all** label dimensions
 or preserve distinct dimensions by including a `without` or `by` clause. These
@@ -226,8 +251,8 @@ all other labels are preserved in the output. `by` does the opposite and drops
 labels that are not listed in the `by` clause, even if their label values are
 identical between all elements of the vector.
 
-`parameter` is only required for `count_values`, `quantile`, `topk` and
-`bottomk`.
+`parameter` is only required for `count_values`, `quantile`, `topk`,
+`bottomk`, `limitk` and `limit_ratio`.
 
 `count_values` outputs one time series per unique sample value. Each series has
 an additional label. The name of that label is given by the aggregation
@@ -238,10 +263,15 @@ time series is the number of times that sample value was present.
 the input samples, including the original labels, are returned in the result
 vector. `by` and `without` are only used to bucket the input vector.
 
+`limitk` and `limit_ratio` also return a subset of the input samples,
+including the original labels in the result vector, these are experimental
+operators that must be enabled with `--enable-feature=promql-experimental-functions`.
+
 `quantile` calculates the φ-quantile, the value that ranks at number φ*N among
 the N metric values of the dimensions aggregated over. φ is provided as the
 aggregation parameter. For example, `quantile(0.5, ...)` calculates the median,
 `quantile(0.95, ...)` the 95th percentile. For φ = `NaN`, `NaN` is returned. For φ < 0, `-Inf` is returned. For φ > 1, `+Inf` is returned.
+
 
 Example:
 
@@ -268,6 +298,33 @@ To get the 5 largest HTTP requests counts across all instances we could write:
 
     topk(5, http_requests_total)
 
+To sample 10 timeseries, for example to inspect labels and their values, we
+could write:
+
+    limitk(10, http_requests_total)
+
+To deterministically sample approximately 10% of timeseries we could write:
+
+    limit_ratio(0.1, http_requests_total)
+
+Given that `limit_ratio()` implements a deterministic sampling algorithm (based
+on labels' hash), you can get the _complement_ of the above samples, i.e.
+approximately 90%, but precisely those not returned by `limit_ratio(0.1, ...)`
+with:
+
+    limit_ratio(-0.9, http_requests_total)
+
+You can also use this feature to e.g. verify that `avg()` is a representative
+aggregation for your samples' values, by checking that the difference between
+averaging two samples' subsets is "small" when compared to the standard
+deviation.
+
+    abs(
+      avg(limit_ratio(0.5, http_requests_total))
+      -
+      avg(limit_ratio(-0.5, http_requests_total))
+    ) <= bool stddev(http_requests_total)
+
 ## Binary operator precedence
 
 The following list shows the precedence of binary operators in Prometheus, from
@@ -283,3 +340,35 @@ highest to lowest.
 Operators on the same precedence level are left-associative. For example,
 `2 * 3 % 2` is equivalent to `(2 * 3) % 2`. However `^` is right associative,
 so `2 ^ 3 ^ 2` is equivalent to `2 ^ (3 ^ 2)`.
+
+## Operators for native histograms
+
+Native histograms are an experimental feature. Ingesting native histograms has
+to be enabled via a [feature flag](../../feature_flags.md#native-histograms). Once
+native histograms have been ingested, they can be queried (even after the
+feature flag has been disabled again). However, the operator support for native
+histograms is still very limited.
+
+Logical/set binary operators work as expected even if histogram samples are
+involved. They only check for the existence of a vector element and don't
+change their behavior depending on the sample type of an element (float or
+histogram). The `count` aggregation operator works similarly.
+
+The binary `+` and `-` operators between two native histograms and the `sum`
+and `avg` aggregation operators to aggregate native histograms are fully
+supported. Even if the histograms involved have different bucket layouts, the
+buckets are automatically converted appropriately so that the operation can be
+performed. (With the currently supported bucket schemas, that's always
+possible.) If either operator has to aggregate a mix of histogram samples and
+float samples, the corresponding vector element is removed from the output
+vector entirely.
+
+The binary `*` operator works between a native histogram and a float in any
+order, while the binary `/` operator can be used between a native histogram
+and a float in that exact order.
+
+All other operators (and unmentioned cases for the above operators) do not
+behave in a meaningful way. They either treat the histogram sample as if it
+were a float sample of value 0, or (in case of arithmetic operations between a
+scalar and a vector) they leave the histogram sample unchanged. This behavior
+will change to a meaningful one before native histograms are a stable feature.

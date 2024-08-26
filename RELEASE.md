@@ -41,7 +41,24 @@ Release cadence of first pre-releases being cut is 6 weeks.
 | v2.34          | 2022-02-23                                 | Chris Marchbanks (GitHub: @csmarchbanks)    |
 | v2.35          | 2022-04-06                                 | Augustin Husson (GitHub: @nexucis)          |
 | v2.36          | 2022-05-18                                 | Matthias Loibl (GitHub: @metalmatze)        |
-| v2.37          | 2022-06-29                                 | **searching for volunteer**                 |
+| v2.37 LTS      | 2022-06-29                                 | Julien Pivotto (GitHub: @roidelapluie)      |
+| v2.38          | 2022-08-10                                 | Julius Volz (GitHub: @juliusv)              |
+| v2.39          | 2022-09-21                                 | Ganesh Vernekar (GitHub: @codesome)         |
+| v2.40          | 2022-11-02                                 | Ganesh Vernekar (GitHub: @codesome)         |
+| v2.41          | 2022-12-14                                 | Julien Pivotto (GitHub: @roidelapluie)      |
+| v2.42          | 2023-01-25                                 | Kemal Akkoyun (GitHub: @kakkoyun)           |
+| v2.43          | 2023-03-08                                 | Julien Pivotto (GitHub: @roidelapluie)      |
+| v2.44          | 2023-04-19                                 | Bryan Boreham (GitHub: @bboreham)           |
+| v2.45 LTS      | 2023-05-31                                 | Jesus Vazquez (Github: @jesusvazquez)       |
+| v2.46          | 2023-07-12                                 | Julien Pivotto (GitHub: @roidelapluie)      |
+| v2.47          | 2023-08-23                                 | Bryan Boreham (GitHub: @bboreham)           |
+| v2.48          | 2023-10-04                                 | Levi Harrison (GitHub: @LeviHarrison)       |
+| v2.49          | 2023-12-05                                 | Bartek Plotka (GitHub: @bwplotka)           |
+| v2.50          | 2024-01-16                                 | Augustin Husson (GitHub: @nexucis)          |
+| v2.51          | 2024-03-07                                 | Bryan Boreham (GitHub: @bboreham)           |
+| v2.52          | 2024-04-22                                 | Arthur Silva Sens (GitHub: @ArthurSens)     |
+| v2.53 LTS      | 2024-06-03                                 | George Krajcsovits (GitHub: @krajorama)     |
+| v2.54          | 2024-07-17                                 | Bryan Boreham (GitHub: @bboreham)           |
 
 If you are interested in volunteering please create a pull request against the [prometheus/prometheus](https://github.com/prometheus/prometheus) repository and propose yourself for the release series of your choice.
 
@@ -78,7 +95,10 @@ Maintaining the release branches for older minor releases happens on a best effo
 
 A few days before a major or minor release, consider updating the dependencies.
 
-Then create a pull request against the main branch.
+Note that we use [Dependabot](.github/dependabot.yml) to continuously update most things automatically. Therefore, most dependencies should be up to date.
+Check the [dependencies GitHub label](https://github.com/prometheus/prometheus/labels/dependencies) to see if there are any pending updates.
+
+This bot currently does not manage `+incompatible` and `v0.0.0` in the version specifier for Go modules.
 
 Note that after a dependency update, you should look out for any weirdness that
 might have happened. Such weirdnesses include but are not limited to: flaky
@@ -93,15 +113,19 @@ This is also a good time to consider any experimental features and feature
 flags for promotion to stable or for deprecation or ultimately removal. Do any
 of these in pull requests, one per feature.
 
-#### Updating Go dependencies
+> NOTE: As a validation step check if all security alerts are closed after this step: https://github.com/prometheus/prometheus/security/dependabot. Sometimes it's ok
+> if not critical and e.g. fix is not released yet (or it does not relate to 
+> upgrading) or when we are unaffected.
+ 
+#### Manually updating Go dependencies
 
-```
-make update-go-deps
-git add go.mod go.sum
-git commit -m "Update dependencies"
+This is usually only needed for `+incompatible` and `v0.0.0` non-semver updates.
+
+```bash
+make update-all-go-deps
 ```
 
-#### Updating React dependencies
+#### Manually updating React dependencies
 
 The React application recently moved to a monorepo system with multiple internal npm packages. Dependency upgrades are
 quite sensitive for the time being.
@@ -112,10 +136,10 @@ In case you want to update the UI dependencies, you can run the following comman
 make update-npm-deps
 ```
 
-Once this step completes, please verify that no additional `node_modules` directory was created in any of the module subdirectories 
+Once this step completes, please verify that no additional `node_modules` directory was created in any of the module subdirectories
 (which could indicate conflicting dependency versions across modules). Then run `make ui-build` to verify that the build is still working.
 
-Note: Once in a while, the npm dependencies should also be updated to their latest release versions (major or minor) with `make upgrade-npm-deps`, 
+Note: Once in a while, the npm dependencies should also be updated to their latest release versions (major or minor) with `make upgrade-npm-deps`,
 though this may be done at convenient times (e.g. by the UI maintainers) that are out-of-sync with Prometheus releases.
 
 ### 1. Prepare your release
@@ -126,25 +150,34 @@ Changes for a patch release or release candidate should be merged into the previ
 
 Bump the version in the `VERSION` file and update `CHANGELOG.md`. Do this in a proper PR pointing to the release branch as this gives others the opportunity to chime in on the release in general and on the addition to the changelog in particular. For a release candidate, append something like `-rc.0` to the version (with the corresponding changes to the tag name, the release name etc.).
 
+When updating the `CHANGELOG.md` look at all PRs included in the release since the last release and verify if they need a changelog entry.
+
 Note that `CHANGELOG.md` should only document changes relevant to users of Prometheus, including external API changes, performance improvements, and new features. Do not document changes of internal interfaces, code refactorings and clean-ups, changes to the build process, etc. People interested in these are asked to refer to the git history.
 
 For release candidates still update `CHANGELOG.md`, but when you cut the final release later, merge all the changes from the pre-releases into the one final update.
 
 Entries in the `CHANGELOG.md` are meant to be in this order:
 
+* `[SECURITY]` - A bugfix that specifically fixes a security issue.
 * `[CHANGE]`
 * `[FEATURE]`
 * `[ENHANCEMENT]`
 * `[BUGFIX]`
+
+Then bump the UI module version:
+
+```bash
+make ui-bump-version
+```
 
 ### 2. Draft the new release
 
 Tag the new release via the following commands:
 
 ```bash
-$ tag="v$(< VERSION)"
-$ git tag -s "${tag}" -m "${tag}"
-$ git push origin "${tag}"
+tag="v$(< VERSION)"
+git tag -s "${tag}" -m "${tag}"
+git push origin "${tag}"
 ```
 
 Go modules versioning requires strict use of semver. Because we do not commit to
@@ -154,9 +187,9 @@ the Prometheus server, we use major version zero releases for the libraries.
 Tag the new library release via the following commands:
 
 ```bash
-$ tag="v$(sed s/2/0/ < VERSION)"
-$ git tag -s "${tag}" -m "${tag}"
-$ git push origin "${tag}"
+tag="v$(sed s/2/0/ < VERSION)"
+git tag -s "${tag}" -m "${tag}"
+git push origin "${tag}"
 ```
 
 Optionally, you can use this handy `.gitconfig` alias.

@@ -16,9 +16,9 @@ package moby
 import (
 	"crypto/sha1"
 	"encoding/base64"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,7 +29,7 @@ import (
 	"github.com/prometheus/prometheus/util/strutil"
 )
 
-// SDMock is the interface for the DigitalOcean mock
+// SDMock is the interface for the DigitalOcean mock.
 type SDMock struct {
 	t         *testing.T
 	Server    *httptest.Server
@@ -47,12 +47,12 @@ func NewSDMock(t *testing.T, directory string) *SDMock {
 	}
 }
 
-// Endpoint returns the URI to the mock server
+// Endpoint returns the URI to the mock server.
 func (m *SDMock) Endpoint() string {
 	return m.Server.URL + "/"
 }
 
-// Setup creates the mock server
+// Setup creates the mock server.
 func (m *SDMock) Setup() {
 	m.Mux = http.NewServeMux()
 	m.Server = httptest.NewServer(m.Mux)
@@ -63,7 +63,7 @@ func (m *SDMock) Setup() {
 // HandleNodesList mocks nodes list.
 func (m *SDMock) SetupHandlers() {
 	headers := make(map[string]string)
-	rawHeaders, err := ioutil.ReadFile(filepath.Join("testdata", m.directory, "headers.yml"))
+	rawHeaders, err := os.ReadFile(filepath.Join("testdata", m.directory, "headers.yml"))
 	require.NoError(m.t, err)
 	yaml.Unmarshal(rawHeaders, &headers)
 
@@ -102,13 +102,13 @@ func (m *SDMock) SetupHandlers() {
 					f += "__" + base64.URLEncoding.EncodeToString(h.Sum(nil))[:10]
 				}
 			}
-			if response, err := ioutil.ReadFile(filepath.Join("testdata", m.directory, f+".json")); err == nil {
+			if response, err := os.ReadFile(filepath.Join("testdata", m.directory, f+".json")); err == nil {
 				w.Header().Add("content-type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				w.Write(response)
 				return
 			}
-			if response, err := ioutil.ReadFile(filepath.Join("testdata", m.directory, f)); err == nil {
+			if response, err := os.ReadFile(filepath.Join("testdata", m.directory, f)); err == nil {
 				w.WriteHeader(http.StatusOK)
 				w.Write(response)
 				return

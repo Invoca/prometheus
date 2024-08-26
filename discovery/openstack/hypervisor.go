@@ -17,13 +17,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/go-kit/log"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/hypervisors"
 	"github.com/gophercloud/gophercloud/pagination"
-	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/prometheus/discovery/targetgroup"
@@ -62,18 +62,18 @@ func (h *HypervisorDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group
 	h.provider.Context = ctx
 	err := openstack.Authenticate(h.provider, *h.authOpts)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not authenticate to OpenStack")
+		return nil, fmt.Errorf("could not authenticate to OpenStack: %w", err)
 	}
 
 	client, err := openstack.NewComputeV2(h.provider, gophercloud.EndpointOpts{
 		Region: h.region, Availability: h.availability,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create OpenStack compute session")
+		return nil, fmt.Errorf("could not create OpenStack compute session: %w", err)
 	}
 
 	tg := &targetgroup.Group{
-		Source: fmt.Sprintf("OS_" + h.region),
+		Source: "OS_" + h.region,
 	}
 	// OpenStack API reference
 	// https://developer.openstack.org/api-ref/compute/#list-hypervisors-details
@@ -81,11 +81,11 @@ func (h *HypervisorDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group
 	err = pagerHypervisors.EachPage(func(page pagination.Page) (bool, error) {
 		hypervisorList, err := hypervisors.ExtractHypervisors(page)
 		if err != nil {
-			return false, errors.Wrap(err, "could not extract hypervisors")
+			return false, fmt.Errorf("could not extract hypervisors: %w", err)
 		}
 		for _, hypervisor := range hypervisorList {
 			labels := model.LabelSet{}
-			addr := net.JoinHostPort(hypervisor.HostIP, fmt.Sprintf("%d", h.port))
+			addr := net.JoinHostPort(hypervisor.HostIP, strconv.Itoa(h.port))
 			labels[model.AddressLabel] = model.LabelValue(addr)
 			labels[openstackLabelHypervisorID] = model.LabelValue(hypervisor.ID)
 			labels[openstackLabelHypervisorHostName] = model.LabelValue(hypervisor.HypervisorHostname)

@@ -12,13 +12,11 @@
 // limitations under the License.
 
 //go:build plugins
-// +build plugins
 
 package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -30,7 +28,7 @@ import (
 //go:generate go run generate.go
 
 func main() {
-	data, err := ioutil.ReadFile(filepath.Join("..", "plugins.yml"))
+	data, err := os.ReadFile(filepath.Join("..", "plugins.yml"))
 	if err != nil {
 		log.Fatal(err)
 	}

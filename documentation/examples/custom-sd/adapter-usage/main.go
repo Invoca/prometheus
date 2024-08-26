@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -26,11 +25,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
-	"gopkg.in/alecthomas/kingpin.v2"
 
+	prom_discovery "github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 	"github.com/prometheus/prometheus/documentation/examples/custom-sd/adapter"
 	"github.com/prometheus/prometheus/util/strutil"
@@ -101,11 +102,11 @@ func (d *discovery) parseServiceNodes(resp *http.Response, name string) (*target
 	}
 
 	defer func() {
-		io.Copy(ioutil.Discard, resp.Body)
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}()
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +127,9 @@ func (d *discovery) parseServiceNodes(resp *http.Response, name string) (*target
 		// since the service may be registered remotely through a different node.
 		var addr string
 		if node.ServiceAddress != "" {
-			addr = net.JoinHostPort(node.ServiceAddress, fmt.Sprintf("%d", node.ServicePort))
+			addr = net.JoinHostPort(node.ServiceAddress, strconv.Itoa(node.ServicePort))
 		} else {
-			addr = net.JoinHostPort(node.Address, fmt.Sprintf("%d", node.ServicePort))
+			addr = net.JoinHostPort(node.Address, strconv.Itoa(node.ServicePort))
 		}
 
 		target := model.LabelSet{model.AddressLabel: model.LabelValue(addr)}
@@ -168,8 +169,8 @@ func (d *discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 			continue
 		}
 
-		b, err := ioutil.ReadAll(resp.Body)
-		io.Copy(ioutil.Discard, resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			level.Error(d.logger).Log("msg", "Error reading services list", "err", err)
@@ -269,7 +270,21 @@ func main() {
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
-	sdAdapter := adapter.NewAdapter(ctx, *outputFile, "exampleSD", disc, logger)
+
+	if err != nil {
+		level.Error(logger).Log("msg", "failed to create discovery metrics", "err", err)
+		os.Exit(1)
+	}
+
+	reg := prometheus.NewRegistry()
+	refreshMetrics := prom_discovery.NewRefreshMetrics(reg)
+	metrics, err := prom_discovery.RegisterSDMetrics(reg, refreshMetrics)
+	if err != nil {
+		level.Error(logger).Log("msg", "failed to register service discovery metrics", "err", err)
+		os.Exit(1)
+	}
+
+	sdAdapter := adapter.NewAdapter(ctx, *outputFile, "exampleSD", disc, logger, metrics, reg)
 	sdAdapter.Run()
 
 	<-ctx.Done()
