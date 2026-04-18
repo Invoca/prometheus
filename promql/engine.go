@@ -2438,7 +2438,7 @@ loop:
 				// point exists at or before range start, add it and then keep
 				// replacing it with later points while not yet (strictly)
 				// inside the range.
-				if t > mint || !appendedPointBeforeMint {
+				if t > mintFloats || !appendedPointBeforeMint {
 					ev.currentSamples++
 					if ev.currentSamples > ev.maxSamples {
 						ev.error(ErrTooManySamples(env))
