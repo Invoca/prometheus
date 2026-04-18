@@ -12,7 +12,7 @@ load 5s
 # 1. Reference eval, aligned with collection.
 eval instant at 25s rate(http_requests[50s])
   {path="/foo"} .022
-  {path="/bar"} .12
+  {path="/bar"} .11
 
 eval instant at 25s xrate(http_requests[50s])
   {path="/foo"} .02
@@ -24,7 +24,7 @@ eval instant at 25s xrate(http_requests[50s])
 # XXX Seeing ~20% jump for path="/foo"
 eval instant at 24s rate(http_requests[50s])
   {path="/foo"} .0265
-  {path="/bar"} .116
+  {path="/bar"} .106
 
 eval instant at 24s xrate(http_requests[50s])
   {path="/foo"} .02
@@ -36,7 +36,7 @@ eval instant at 24s xrate(http_requests[50s])
 # XXX Higher instead of lower for both.
 eval instant at 26s rate(http_requests[50s])
   {path="/foo"} .0228
-  {path="/bar"} .124
+  {path="/bar"} .114
 
 eval instant at 26s xrate(http_requests[50s])
   {path="/foo"} .02
