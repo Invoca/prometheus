@@ -898,6 +898,11 @@ func getTimeRangesForSelector(s *parser.EvalStmt, n *parser.VectorSelector, path
 	start -= offsetMilliseconds
 	end -= offsetMilliseconds
 
+	f, ok := parser.Functions[extractFuncFromPath(path)]
+	if ok && f.ExtRange {
+		start -= durationMilliseconds(s.LookbackDelta)
+	}
+
 	return start, end
 }
 
@@ -937,6 +942,14 @@ func (ng *Engine) populateSeries(ctx context.Context, querier storage.Querier, s
 			}
 			evalRange = 0
 			hints.By, hints.Grouping = extractGroupsFromPath(path)
+			// Include an extra lookbackDelta iff this is the argument to an
+			// extended range function. Extended ranges include one extra
+			// point, this is how far back we need to look for it.
+			f, ok := parser.Functions[hints.Func]
+			if ok && f.ExtRange {
+				hints.Start = hints.Start - durationMilliseconds(ng.lookbackDelta)
+			}
+
 			n.UnexpandedSeriesSet = querier.Select(ctx, false, hints, n.LabelMatchers...)
 
 		case *parser.MatrixSelector:
@@ -1601,9 +1614,16 @@ func (ev *evaluator) eval(expr parser.Expr) (parser.Value, annotations.Annotatio
 		mat := make(Matrix, 0, len(selVS.Series)) // Output matrix.
 		offset := durationMilliseconds(selVS.Offset)
 		selRange := durationMilliseconds(sel.Range)
+
 		stepRange := selRange
 		if stepRange > ev.interval {
 			stepRange = ev.interval
+		}
+		bufferRange := selRange
+
+		if e.Func.ExtRange {
+			bufferRange += durationMilliseconds(ev.lookbackDelta)
+			stepRange += durationMilliseconds(ev.lookbackDelta)
 		}
 		// Reuse objects across steps to save memory allocations.
 		var floats []FPoint
@@ -1613,7 +1633,7 @@ func (ev *evaluator) eval(expr parser.Expr) (parser.Value, annotations.Annotatio
 		inArgs[matrixArgIndex] = inMatrix
 		enh := &EvalNodeHelper{Out: make(Vector, 0, 1)}
 		// Process all the calls for one time series at a time.
-		it := storage.NewBuffer(selRange)
+		it := storage.NewBuffer(bufferRange)
 		var chkIter chunkenc.Iterator
 		for i, s := range selVS.Series {
 			if err := contextDone(ev.ctx, "expression evaluation"); err != nil {
@@ -1656,7 +1676,7 @@ func (ev *evaluator) eval(expr parser.Expr) (parser.Value, annotations.Annotatio
 				if ts == ev.startTimestamp || selVS.Timestamp == nil {
 					maxt := ts - offset
 					mint := maxt - selRange
-					floats, histograms = ev.matrixIterSlice(it, mint, maxt, floats, histograms)
+					floats, histograms = ev.matrixIterSlice(it, mint, maxt, e.Func.ExtRange, floats, histograms)
 				}
 				if len(floats)+len(histograms) == 0 {
 					continue
@@ -2210,7 +2230,7 @@ func (ev *evaluator) matrixSelector(node *parser.MatrixSelector) (Matrix, annota
 			Metric: series[i].Labels(),
 		}
 
-		ss.Floats, ss.Histograms = ev.matrixIterSlice(it, mint, maxt, nil, nil)
+		ss.Floats, ss.Histograms = ev.matrixIterSlice(it, mint, maxt, false, nil, nil)
 		totalSize := int64(len(ss.Floats)) + int64(totalHPointSize(ss.Histograms))
 		ev.samplesStats.IncrementSamplesAtTimestamp(ev.startTimestamp, totalSize)
 
@@ -2233,10 +2253,11 @@ func (ev *evaluator) matrixSelector(node *parser.MatrixSelector) (Matrix, annota
 // into the [mint, maxt] range are retained; only points with later timestamps
 // are populated from the iterator.
 func (ev *evaluator) matrixIterSlice(
-	it *storage.BufferedSeriesIterator, mint, maxt int64,
+	it *storage.BufferedSeriesIterator, mint, maxt int64, extRange bool,
 	floats []FPoint, histograms []HPoint,
 ) ([]FPoint, []HPoint) {
 	mintFloats, mintHistograms := mint, mint
+	extMint := mint - durationMilliseconds(ev.lookbackDelta)
 
 	// First floats...
 	if len(floats) > 0 && floats[len(floats)-1].T >= mint {
@@ -2246,13 +2267,28 @@ func (ev *evaluator) matrixIterSlice(
 		//   (b) the number of samples is relatively small.
 		// so a linear search will be as fast as a binary search.
 		var drop int
-		for drop = 0; floats[drop].T < mint; drop++ {
+		if !extRange {
+			for drop = 0; floats[drop].T < mint; drop++ {
+			}
+			// Only append points with timestamps after the last timestamp we have.
+			mintFloats = floats[len(floats)-1].T + 1
+		} else {
+			// This is an argument to an extended range function: first go past mint.
+			for drop = 0; drop < len(floats) && floats[drop].T <= mint; drop++ {
+			}
+			// Then, go back one sample if within lookbackDelta of mint.
+			if drop > 0 && floats[drop-1].T >= extMint {
+				drop--
+			}
+			if floats[len(floats)-1].T >= mint {
+				// Only append points with timestamps after the last timestamp we have.
+				mintFloats = floats[len(floats)-1].T + 1
+			}
 		}
+
 		ev.currentSamples -= drop
 		copy(floats, floats[drop:])
 		floats = floats[:len(floats)-drop]
-		// Only append points with timestamps after the last timestamp we have.
-		mintFloats = floats[len(floats)-1].T + 1
 	} else {
 		ev.currentSamples -= len(floats)
 		if floats != nil {
@@ -2295,6 +2331,7 @@ func (ev *evaluator) matrixIterSlice(
 	}
 
 	buf := it.Buffer()
+	appendedPointBeforeMint := len(floats) > 0
 loop:
 	for {
 		switch buf.Next() {
@@ -2328,16 +2365,36 @@ loop:
 			if value.IsStaleNaN(f) {
 				continue loop
 			}
-			// Values in the buffer are guaranteed to be smaller than maxt.
-			if t >= mintFloats {
-				ev.currentSamples++
-				if ev.currentSamples > ev.maxSamples {
-					ev.error(ErrTooManySamples(env))
+			if !extRange {
+				// Values in the buffer are guaranteed to be smaller than maxt.
+				if t >= mintFloats {
+					ev.currentSamples++
+					if ev.currentSamples > ev.maxSamples {
+						ev.error(ErrTooManySamples(env))
+					}
+					if floats == nil {
+						floats = getFPointSlice(16)
+					}
+					floats = append(floats, FPoint{T: t, F: f})
 				}
-				if floats == nil {
-					floats = getFPointSlice(16)
+			} else {
+				// This is the argument to an extended range function: if any
+				// point exists at or before range start, add it and then keep
+				// replacing it with later points while not yet (strictly)
+				// inside the range.
+				if t > mint || !appendedPointBeforeMint {
+					ev.currentSamples++
+					if ev.currentSamples > ev.maxSamples {
+						ev.error(ErrTooManySamples(env))
+					}
+					if floats == nil {
+						floats = getFPointSlice(16)
+					}
+					floats = append(floats, FPoint{T: t, F: f})
+					appendedPointBeforeMint = true
+				} else if len(floats) > 0 {
+					floats[len(floats)-1] = FPoint{T: t, F: f}
 				}
-				floats = append(floats, FPoint{T: t, F: f})
 			}
 		}
 	}
