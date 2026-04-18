@@ -310,6 +310,57 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	return append(enh.Out, Sample{F: resultValue}), nil
 }
 
+// yIncrease is a utility function for yincrease/yrate/ydelta.
+// It calculates the increase of the range (allowing for counter resets if isCounter is true),
+// taking into account the sample at the end of the previous range (just before rangeStartMsec).
+// It returns the result across the range [rangeStartMsec, rangeEndMsec).
+// It always extends the preceding sample's value until the next sample, including the
+// unwritten origin sample value at the start of every time series.
+//
+// It is a linear function, meaning that for adjacent periods p0 and p1
+// ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
+//
+//	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
+func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
+	var lastBeforeRange, lastInRange, inRangeRestartSkew float64
+
+	if !isCounter && len(points) > 0 {
+		lastBeforeRange = points[0].F // Gauges don't start at 0.
+	}
+
+	// The points are in time order, so we can just walk the list once and remember the last values
+	// seen "before" and "in" range. If there are no values in range, we use the last value before range
+	// so that the increase is 0.
+	for i := 0; i < len(points) && points[i].T < rangeEndMsec; i++ { // Only consider points in [rangeStartMsec, rangeEndMsec).
+		if points[i].T >= rangeStartMsec {
+			if isCounter && points[i].F < lastInRange { // Counter reset (process restart).
+				inRangeRestartSkew += lastInRange
+			}
+		} else {
+			lastBeforeRange = points[i].F
+		}
+		lastInRange = points[i].F
+	}
+
+	return lastInRange - lastBeforeRange + inRangeRestartSkew
+}
+
+// rangeFromSelectors extracts points, rangeStartMsec, rangeEndMsec, and rangeSeconds
+// from the common (Matrix, MatrixSelector) arguments supplied to yincrease/yrate/ydelta.
+// The range is [rangeStartMsec, rangeEndMsec). That is, every sample in range has the property:
+// rangeStartMsec <= sample.T < rangeEndMsec.
+func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) ([]FPoint, int64, int64, float64) {
+	ms := args[0].(*parser.MatrixSelector)
+	vs := ms.VectorSelector.(*parser.VectorSelector)
+
+	rangeStartMsec := enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
+	rangeEndMsec := enh.Ts - durationMilliseconds(vs.Offset)
+
+	points := vals[0].(Matrix)[0].Floats
+
+	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
+}
+
 // === delta(Matrix parser.ValueTypeMatrix) (Vector, Annotations) ===
 func funcDelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	return extrapolatedRate(vals, args, enh, false, false)
