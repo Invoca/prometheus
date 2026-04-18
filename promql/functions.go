@@ -391,6 +391,27 @@ func funcXincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	return extendedRate(vals, args, enh, true, false)
 }
 
+// === ydelta(node parser.ValueTypeMatrix) (Vector, Annotations) ===
+func funcYdelta(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false)
+	return append(enh.Out, Sample{F: value}), nil
+}
+
+// === yincrease(node parser.ValueTypeMatrix) (Vector, Annotations) ===
+func funcYincrease(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
+	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(vals, args, enh)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true)
+	return append(enh.Out, Sample{F: value}), nil
+}
+
+// === yrate(node parser.ValueTypeMatrix) (Vector, Annotations) ===
+func funcYrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
+	points, rangeStartMsec, rangeEndMsec, rangeSeconds := rangeFromSelectors(vals, args, enh)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true) / rangeSeconds
+	return append(enh.Out, Sample{F: value}), nil
+}
+
 // === irate(node parser.ValueTypeMatrix) (Vector, Annotations) ===
 func funcIrate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	return instantValue(vals, enh.Out, true)
@@ -1749,6 +1770,9 @@ var FunctionCalls = map[string]FunctionCall{
 	"xdelta":             funcXdelta,
 	"xincrease":          funcXincrease,
 	"xrate":              funcXrate,
+	"ydelta":             funcYdelta,
+	"yincrease":          funcYincrease,
+	"yrate":              funcYrate,
 	"year":               funcYear,
 }
 

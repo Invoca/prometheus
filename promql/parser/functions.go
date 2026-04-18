@@ -436,6 +436,24 @@ var Functions = map[string]*Function{
 		ReturnType: ValueTypeVector,
 		ExtRange:   true,
 	},
+	"ydelta": {
+		Name:       "ydelta",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"yincrease": {
+		Name:       "yincrease",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
+	"yrate": {
+		Name:       "yrate",
+		ArgTypes:   []ValueType{ValueTypeMatrix},
+		ReturnType: ValueTypeVector,
+		ExtRange:   true,
+	},
 	"year": {
 		Name:       "year",
 		ArgTypes:   []ValueType{ValueTypeVector},
