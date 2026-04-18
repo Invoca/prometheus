@@ -59,16 +59,19 @@ import (
 	"github.com/prometheus/prometheus/util/teststorage"
 )
 
-var testEngine = promql.NewEngine(promql.EngineOpts{
-	Logger:                   nil,
-	Reg:                      nil,
-	MaxSamples:               10000,
-	Timeout:                  100 * time.Second,
-	NoStepSubqueryIntervalFn: func(int64) int64 { return 60 * 1000 },
-	EnableAtModifier:         true,
-	EnableNegativeOffset:     true,
-	EnablePerStepStats:       true,
-})
+func testEngine(t *testing.T) *promql.Engine {
+	t.Helper()
+	return promqltest.NewTestEngineWithOpts(t, promql.EngineOpts{
+		Logger:                   nil,
+		Reg:                      nil,
+		MaxSamples:               10000,
+		Timeout:                  100 * time.Second,
+		NoStepSubqueryIntervalFn: func(int64) int64 { return 60 * 1000 },
+		EnableAtModifier:         true,
+		EnableNegativeOffset:     true,
+		EnablePerStepStats:       true,
+	})
+}
 
 // testMetaStore satisfies the scrape.MetricMetadataStore interface.
 // It is used to inject specific metadata as part of a test case.
@@ -306,8 +309,7 @@ func (m *rulesRetrieverMock) CreateRuleGroups() {
 		MaxSamples: 10,
 		Timeout:    100 * time.Second,
 	}
-
-	engine := promql.NewEngine(engineOpts)
+	engine := promqltest.NewTestEngineWithOpts(m.testing, engineOpts)
 	opts := &rules.ManagerOptions{
 		QueryFunc:  rules.EngineQueryFunc(engine, storage),
 		Appendable: storage,
@@ -359,6 +361,7 @@ var samplePrometheusCfg = config.Config{
 	ScrapeConfigs:      []*config.ScrapeConfig{},
 	RemoteWriteConfigs: []*config.RemoteWriteConfig{},
 	RemoteReadConfigs:  []*config.RemoteReadConfig{},
+	OTLPConfig:         config.OTLPConfig{},
 }
 
 var sampleFlagMap = map[string]string{
@@ -430,9 +433,10 @@ func TestEndpoints(t *testing.T) {
 
 	now := time.Now()
 
+	ng := testEngine(t)
+
 	t.Run("local", func(t *testing.T) {
-		algr := rulesRetrieverMock{}
-		algr.testing = t
+		algr := rulesRetrieverMock{testing: t}
 
 		algr.CreateAlertingRules()
 		algr.CreateRuleGroups()
@@ -444,7 +448,7 @@ func TestEndpoints(t *testing.T) {
 
 		api := &API{
 			Queryable:             storage,
-			QueryEngine:           testEngine,
+			QueryEngine:           ng,
 			ExemplarQueryable:     storage.ExemplarQueryable(),
 			targetRetriever:       testTargetRetriever.toFactory(),
 			alertmanagerRetriever: testAlertmanagerRetriever{}.toFactory(),
@@ -495,8 +499,7 @@ func TestEndpoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		algr := rulesRetrieverMock{}
-		algr.testing = t
+		algr := rulesRetrieverMock{testing: t}
 
 		algr.CreateAlertingRules()
 		algr.CreateRuleGroups()
@@ -508,7 +511,7 @@ func TestEndpoints(t *testing.T) {
 
 		api := &API{
 			Queryable:             remote,
-			QueryEngine:           testEngine,
+			QueryEngine:           ng,
 			ExemplarQueryable:     storage.ExemplarQueryable(),
 			targetRetriever:       testTargetRetriever.toFactory(),
 			alertmanagerRetriever: testAlertmanagerRetriever{}.toFactory(),
@@ -650,7 +653,7 @@ func TestQueryExemplars(t *testing.T) {
 
 	api := &API{
 		Queryable:         storage,
-		QueryEngine:       testEngine,
+		QueryEngine:       testEngine(t),
 		ExemplarQueryable: storage.ExemplarQueryable(),
 	}
 
@@ -766,12 +769,15 @@ func TestLabelNames(t *testing.T) {
 	api := &API{
 		Queryable: storage,
 	}
-	request := func(method string, matchers ...string) (*http.Request, error) {
+	request := func(method, limit string, matchers ...string) (*http.Request, error) {
 		u, err := url.Parse("http://example.com")
 		require.NoError(t, err)
 		q := u.Query()
 		for _, matcher := range matchers {
 			q.Add("match[]", matcher)
+		}
+		if limit != "" {
+			q.Add("limit", limit)
 		}
 		u.RawQuery = q.Encode()
 
@@ -786,6 +792,7 @@ func TestLabelNames(t *testing.T) {
 		name              string
 		api               *API
 		matchers          []string
+		limit             string
 		expected          []string
 		expectedErrorType errorType
 	}{
@@ -798,6 +805,13 @@ func TestLabelNames(t *testing.T) {
 			name:     "non empty label matcher",
 			matchers: []string{`{foo=~".+"}`},
 			expected: []string{"__name__", "abc", "foo", "xyz"},
+			api:      api,
+		},
+		{
+			name:     "non empty label matcher with limit",
+			matchers: []string{`{foo=~".+"}`},
+			expected: []string{"__name__", "abc"},
+			limit:    "2",
 			api:      api,
 		},
 		{
@@ -832,7 +846,7 @@ func TestLabelNames(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				ctx := context.Background()
-				req, err := request(method, tc.matchers...)
+				req, err := request(method, tc.limit, tc.matchers...)
 				require.NoError(t, err)
 				res := tc.api.labelNames(req.WithContext(ctx))
 				assertAPIError(t, res.err, tc.expectedErrorType)
@@ -858,7 +872,7 @@ func TestStats(t *testing.T) {
 
 	api := &API{
 		Queryable:   storage,
-		QueryEngine: testEngine,
+		QueryEngine: testEngine(t),
 		now: func() time.Time {
 			return time.Unix(123, 0)
 		},
@@ -1061,6 +1075,9 @@ func setupRemote(s storage.Storage) *httptest.Server {
 				return
 			}
 		}
+
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.Header().Set("Content-Encoding", "snappy")
 
 		if err := remote.EncodeReadResponse(&resp, w); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1453,6 +1470,15 @@ func testEndpoints(t *testing.T, api *API, tr *testTargetRetriever, es storage.E
 			query: url.Values{
 				"match[]": []string{"test_metric1"},
 				"limit":   []string{"2"},
+			},
+			responseLen:   2, // API does not specify which particular value will come back.
+			warningsCount: 0, // No warnings if limit isn't exceeded.
+		},
+		{
+			endpoint: api.series,
+			query: url.Values{
+				"match[]": []string{"test_metric1"},
+				"limit":   []string{"0"},
 			},
 			responseLen:   2, // API does not specify which particular value will come back.
 			warningsCount: 0, // No warnings if limit isn't exceeded.
