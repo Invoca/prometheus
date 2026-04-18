@@ -1792,10 +1792,20 @@ var AtModifierUnsafeFunctions = map[string]struct{}{
 }
 
 func init() {
-	// REPLACE_RATE_FUNCS replaces the default rate extrapolation functions
-	// with xrate functions. This allows for a drop-in replacement and Grafana
-	// auto-completion, Prometheus tooling, Thanos, etc. should still work as expected.
-	if os.Getenv("REPLACE_RATE_FUNCS") == "1" {
+	// REPLACE_RATE_FUNCS lets operators swap the built-in rate extrapolation
+	// functions with Invoca's xrate or yrate family at process start, so
+	// Grafana auto-completion, Prometheus tooling, Thanos, etc. continue to
+	// work against queries that call the standard rate/increase/delta names.
+	//
+	// Values:
+	//   "1"       - replace rate/increase/delta with xrate/xincrease/xdelta
+	//               AND remove the x* names (legacy behaviour).
+	//   "x", "X"  - point rate/increase/delta at xrate/xincrease/xdelta but
+	//               keep the x* names available.
+	//   "2",      - point rate/increase/delta at yrate/yincrease/ydelta but
+	//   "y", "Y"    keep the y* names available.
+	switch os.Getenv("REPLACE_RATE_FUNCS") {
+	case "1":
 		FunctionCalls["delta"] = FunctionCalls["xdelta"]
 		FunctionCalls["increase"] = FunctionCalls["xincrease"]
 		FunctionCalls["rate"] = FunctionCalls["xrate"]
@@ -1813,7 +1823,39 @@ func init() {
 		delete(parser.Functions, "xincrease")
 		delete(parser.Functions, "xrate")
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
+
+	case "x", "X":
+		repointParserFunctions("delta", "xdelta")
+		repointParserFunctions("increase", "xincrease")
+		repointParserFunctions("rate", "xrate")
+		repointFunction("delta", "xdelta")
+		repointFunction("increase", "xincrease")
+		repointFunction("rate", "xrate")
+		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta (and left the x* names available as well).")
+
+	case "2", "y", "Y":
+		repointParserFunctions("delta", "ydelta")
+		repointParserFunctions("increase", "yincrease")
+		repointParserFunctions("rate", "yrate")
+		repointFunction("delta", "ydelta")
+		repointFunction("increase", "yincrease")
+		repointFunction("rate", "yrate")
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the y* names available as well).")
 	}
+}
+
+// repointParserFunctions makes the parser entry for name resolve to the
+// entry currently registered under newName (e.g. "rate" -> "xrate").
+// It leaves the newName entry in place.
+func repointParserFunctions(name, newName string) {
+	parser.Functions[name] = parser.Functions[newName]
+}
+
+// repointFunction makes the FunctionCalls entry for name dispatch to the
+// implementation currently registered under newName. The newName entry
+// is left in place.
+func repointFunction(name, newName string) {
+	FunctionCalls[name] = FunctionCalls[newName]
 }
 
 type vectorByValueHeap Vector
