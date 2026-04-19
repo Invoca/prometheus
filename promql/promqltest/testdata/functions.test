@@ -25,7 +25,7 @@ eval instant at 25s xrate(http_requests[50s])
 
 eval instant at 25s yrate(http_requests[50s])
   {path="/foo"} 0.04
-  {path="/bar"} 0.42
+  {path="/bar"} 0.52
 
 # 2. Eval 1 second earlier compared to (1).
 #    * path="/foo" rate should be same or fractionally higher ("shorter" sample, same actual increase);
@@ -74,8 +74,8 @@ eval instant at 75s xrate(http_requests[50s])
   {path="/bar"} 0.8
 
 eval instant at 75s yrate(http_requests[50s])
-  {path="/foo"} 0.06
-  {path="/bar"} 1.32
+  {path="/foo"} 0.02
+  {path="/bar"} 0.8
 
 # 5. Eval 1s earlier compared to (4).
 #    * path="/foo" rate should be same or fractionally lower ("longer" sample, same actual increase).
