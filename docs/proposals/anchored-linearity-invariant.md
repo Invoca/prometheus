@@ -12,17 +12,17 @@
 
 PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/prometheus/proposals/blob/main/proposals/0052-extended-range-selectors-semantics.md), implemented in [prometheus/prometheus#16457](https://github.com/prometheus/prometheus/pull/16457), released in 3.7 behind `promql-extended-range-selectors`) introduces `anchored` and `smoothed`. By combining a left-open / right-closed range `(start, end]` with a separate baseline *anchor* — the latest sample with timestamp `≤ start`, fetched from outside the range within `lookback_delta` — `anchored + increase/rate/delta` has an important mathematical property that the proposal demonstrates informally but never states or tests:
 
-> For any series `m`, times `T₁ ≤ T₂ ≤ T₃`, and range durations `r₁₂ = T₂−T₁`, `r₂₃ = T₃−T₂`, `r₁₃ = T₃−T₁`:
+> For any series `m`, ranges `r_a` and `r_b`, and evaluation instants `T_a, T_b` with `T_b = T_a + r_b` (so the two anchored windows are adjacent, no gap and no overlap):
 >
 > ```promql
-> increase(m[r₁₂] anchored)  @ T₂
+> increase(m[r_a]       anchored)  @ T_a
 >   +
-> increase(m[r₂₃] anchored)  @ T₃
+> increase(m[r_b]       anchored)  @ T_b
 >   =
-> increase(m[r₁₃] anchored)  @ T₃
+> increase(m[r_a + r_b] anchored)  @ T_b
 > ```
 >
-> (assuming `r₁₂ ≤ lookback_delta` so the anchor lookup succeeds).
+> (assuming `r_a ≤ lookback_delta` so the anchor lookup at the left boundary succeeds).
 
 This invariant is what makes anchored `increase` safely composable across contiguous time windows — splitting a wider range into adjacent sub-ranges and summing the results gives the same answer as asking for the wider range directly. Plain `rate`/`increase` doesn't satisfy this; the proposal itself notes on line 119 that *"two consecutive range selectors therefore fail to capture the increase."*
 
@@ -32,28 +32,28 @@ This is the formal expression of the "composability" goal the proposal mentions 
 
 - Gives users a precise, testable reason to prefer `anchored` for any workflow that splits or stitches time ranges (recording rules that roll up, alerts on windowed counter increases, dashboards that zoom between panel ranges, etc.).
 - Locks the invariant into the engine's contract via tests so future refactors can't silently regress it.
-- Resolves a subtle ambiguity at the `T₂` boundary: a sample whose timestamp equals `T₂` is a *member* of the earlier range `(T₁, T₂]` (right-closed) but is *not* a member of the later range `(T₂, T₃]` (left-open). The same sample is nonetheless reached by `anchor(T₂)` for the later range — the anchor lookup ("latest sample with `t ≤ T₂`") reaches backward from, and including, the range's left boundary, even though the boundary itself is not in the range. That dual role — "last in the earlier range" *and* "anchor of the later range," rather than double-membership — is what makes additivity exact.
+- Resolves a subtle ambiguity at the shared boundary `T_a`: a sample whose timestamp equals `T_a` is a *member* of the earlier range (right-closed) but is *not* a member of the later range `(T_a, T_b]` (left-open). The same sample is nonetheless reached by `anchor(T_a)` for the later range — the anchor lookup ("latest sample with `t ≤ T_a`") reaches backward from, and including, the range's left boundary, even though the boundary itself is not in the range. That dual role — "last in the earlier range" *and* "anchor of the later range," rather than double-membership — is what makes additivity exact.
 
 ## Why `anchored` satisfies it
 
 <details>
 <summary>Proof sketch</summary>
 
-Let `last_in(T_a, T_b]` denote the latest sample whose timestamp lies in `(T_a, T_b]`, `anchor(T)` the latest sample with timestamp `≤ T` within the lookback delta, and `resets(T_a, T_b]` the counter-reset correction accumulated from samples in `(T_a, T_b]`.
+Let `last_in(s, e]` denote the latest sample whose timestamp lies in `(s, e]`, `anchor(t)` the latest sample with timestamp `≤ t` within `lookback_delta`, and `resets(s, e]` the counter-reset correction accumulated from samples in `(s, e]`.
 
-Under `anchored + increase`:
+Let `T_start = T_a − r_a` be the left boundary of the combined range. The three anchored windows in the invariant cover `(T_start, T_a]`, `(T_a, T_b]`, and `(T_start, T_b]`, respectively. So:
 
 ```
-f(T₁, T₂] = last_in(T₁, T₂] − anchor(T₁) + resets(T₁, T₂]
-f(T₂, T₃] = last_in(T₂, T₃] − anchor(T₂) + resets(T₂, T₃]
-f(T₁, T₃] = last_in(T₁, T₃] − anchor(T₁) + resets(T₁, T₃]
+f_earlier  = last_in(T_start, T_a] − anchor(T_start) + resets(T_start, T_a]
+f_later    = last_in(T_a,     T_b] − anchor(T_a)     + resets(T_a,     T_b]
+f_combined = last_in(T_start, T_b] − anchor(T_start) + resets(T_start, T_b]
 ```
 
-Adding the first two gives the third iff all of:
+`f_earlier + f_later = f_combined` iff all of:
 
-1. `resets(T₁, T₂] + resets(T₂, T₃] = resets(T₁, T₃]` — holds because `(T₁, T₂]` and `(T₂, T₃]` partition `(T₁, T₃]`; every reset is counted exactly once.
-2. `last_in(T₁, T₂] = anchor(T₂)` — these are *different* lookups that agree in value. `last_in(T₁, T₂]` is the latest sample *in* the range `(T₁, T₂]` (right-closed membership, so a sample at exactly `T₂` qualifies). `anchor(T₂)` is a separate lookup *outside* the later range `(T₂, T₃]`: the latest sample with `t ≤ T₂`, within `lookback_delta`. A sample at exactly `t = T₂` is reached by both — as the last member of the earlier range, and as the anchor for the later one — without ever being a member of both ranges. Provided `r₁₂ ≤ lookback_delta` (so the anchor lookup doesn't time-out before reaching it), these values coincide.
-3. `last_in(T₂, T₃] = last_in(T₁, T₃]` — trivially true when at least one sample exists in `(T₂, T₃]`; handled by the empty-range convention otherwise.
+1. `resets(T_start, T_a] + resets(T_a, T_b] = resets(T_start, T_b]` — holds because `(T_start, T_a]` and `(T_a, T_b]` partition `(T_start, T_b]`; every reset is counted exactly once.
+2. `last_in(T_start, T_a] = anchor(T_a)` — these are *different* lookups that agree in value. `last_in(T_start, T_a]` is the latest sample *in* the earlier range (right-closed membership, so a sample at exactly `T_a` qualifies). `anchor(T_a)` is a separate lookup *outside* the later range `(T_a, T_b]`: the latest sample with `t ≤ T_a`, within `lookback_delta`. A sample at exactly `t = T_a` is reached by both — as the last member of the earlier range, and as the anchor for the later one — without ever being a member of both ranges. Provided `r_a ≤ lookback_delta` (so the anchor lookup doesn't time-out before reaching `T_start`), these values coincide.
+3. `last_in(T_a, T_b] = last_in(T_start, T_b]` — trivially true when at least one sample exists in `(T_a, T_b]`; handled by the empty-range convention otherwise.
 
 The proposal's partial-dataset example (lines 231–237) — *"The first window slightly underestimates while the second window slightly overestimates the actual increase"* — is this invariant in action. The per-window numbers aren't coincidentally canceling; they're composing.
 
@@ -70,8 +70,8 @@ This property is the design goal of the Invoca `yrate` family (referenced in the
 3. **Regression tests** (`promql/promqltest/testdata/…`): paired-window cases asserting the invariant across:
    - Regular scrape cadence, boundary timestamps aligned with sample cadence
    - Same, but shifted off-cadence (to exercise the `last_in` / `anchor` coincidence)
-   - Ranges containing counter resets on both sides of `T₂`
-   - Partial datasets with missing scrapes straddling `T₂`
+   - Ranges containing counter resets on both sides of `T_a`
+   - Partial datasets with missing scrapes straddling `T_a`
 
 ## Happy to contribute
 
