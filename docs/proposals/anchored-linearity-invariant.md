@@ -12,12 +12,20 @@
 
 PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/prometheus/proposals/blob/main/proposals/0052-extended-range-selectors-semantics.md), implemented in [prometheus/prometheus#16457](https://github.com/prometheus/prometheus/pull/16457), released in 3.7 behind `promql-extended-range-selectors`) introduces `anchored` and `smoothed`. By combining a left-open / right-closed range `(start, end]` with a separate baseline *anchor* — the latest sample with timestamp `≤ start`, fetched from outside the range within `lookback_delta` — `anchored + increase/rate/delta` has an important mathematical property that the proposal demonstrates informally but never states or tests:
 
-> For any series `m` and any two evaluation instants `T₁ < T₂`, with:
+> For any series `m` and any three timestamps `T₀ < T₁ < T₂`, let:
 >
-> - `r₁` — any range duration (the earlier window's length), subject to `r₁ ≤ lookback_delta`
-> - `r₂` — the length of the interval `(T₁, T₂]` (so the two anchored windows below are adjacent: the later window's left boundary falls exactly on `T₁`, giving no gap and no overlap)
+> - `r₁` = the length of `(T₀, T₁]`, subject to `r₁ ≤ lookback_delta`
+> - `r₂` = the length of `(T₁, T₂]`
 >
-> then:
+> Then the three anchored windows cover exactly the intervals their names suggest:
+>
+> | Window | Covers |
+> |---|---|
+> | `m[r₁]      anchored  @ T₁` | `(T₀, T₁]` |
+> | `m[r₂]      anchored  @ T₂` | `(T₁, T₂]` |
+> | `m[r₁ + r₂] anchored  @ T₂` | `(T₀, T₂]` |
+>
+> and:
 >
 > ```promql
 > increase(m[r₁]      anchored)  @ T₁
@@ -44,7 +52,7 @@ This is the formal expression of the "composability" goal the proposal mentions 
 
 Let `last_in(s, e]` denote the latest sample whose timestamp lies in `(s, e]`, `anchor(t)` the latest sample with timestamp `≤ t` within `lookback_delta`, and `resets(s, e]` the counter-reset correction accumulated from samples in `(s, e]`.
 
-Let `T₀ = T₁ − r₁` be the left boundary of the combined range. The three anchored windows in the invariant cover `(T₀, T₁]`, `(T₁, T₂]`, and `(T₀, T₂]`, respectively. So:
+The three anchored windows in the invariant cover `(T₀, T₁]`, `(T₁, T₂]`, and `(T₀, T₂]`, respectively. So:
 
 ```
 f₀₁ = last_in(T₀, T₁] − anchor(T₀) + resets(T₀, T₁]
