@@ -12,7 +12,12 @@
 
 PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/prometheus/proposals/blob/main/proposals/0052-extended-range-selectors-semantics.md), implemented in [prometheus/prometheus#16457](https://github.com/prometheus/prometheus/pull/16457), released in 3.7 behind `promql-extended-range-selectors`) introduces `anchored` and `smoothed`. By combining a left-open / right-closed range `(start, end]` with a separate baseline *anchor* — the latest sample with timestamp `≤ start`, fetched from outside the range within `lookback_delta` — `anchored + increase/rate/delta` has an important mathematical property that the proposal demonstrates informally but never states or tests:
 
-> For any series `m`, ranges `r₁` and `r₂`, and evaluation instants `T₁, T₂` with `T₂ = T₁ + r₂` (so the two anchored windows are adjacent, no gap and no overlap):
+> For any series `m` and any two evaluation instants `T₁ < T₂`, with:
+>
+> - `r₁` — any range duration (the earlier window's length), subject to `r₁ ≤ lookback_delta`
+> - `r₂` — the length of the interval `(T₁, T₂]` (so the two anchored windows below are adjacent: the later window's left boundary falls exactly on `T₁`, giving no gap and no overlap)
+>
+> then:
 >
 > ```promql
 > increase(m[r₁]      anchored)  @ T₁
@@ -21,8 +26,6 @@ PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/promethe
 >   =
 > increase(m[r₁ + r₂] anchored)  @ T₂
 > ```
->
-> (assuming `r₁ ≤ lookback_delta` so the anchor lookup at the left boundary succeeds).
 
 This invariant is what makes anchored `increase` safely composable across contiguous time windows — splitting a wider range into adjacent sub-ranges and summing the results gives the same answer as asking for the wider range directly. Plain `rate`/`increase` doesn't satisfy this; the proposal itself notes on line 119 that *"two consecutive range selectors therefore fail to capture the increase."*
 
