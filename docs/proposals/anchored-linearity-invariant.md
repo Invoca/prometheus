@@ -12,17 +12,17 @@
 
 PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/prometheus/proposals/blob/main/proposals/0052-extended-range-selectors-semantics.md), implemented in [prometheus/prometheus#16457](https://github.com/prometheus/prometheus/pull/16457), released in 3.7 behind `promql-extended-range-selectors`) introduces `anchored` and `smoothed`. By combining a left-open / right-closed range `(start, end]` with a separate baseline *anchor* — the latest sample with timestamp `≤ start`, fetched from outside the range within `lookback_delta` — `anchored + increase/rate/delta` has an important mathematical property that the proposal demonstrates informally but never states or tests:
 
-> For any series `m`, times `T₁ ≤ T₂ ≤ T₃`, and durations `Δ₁₂ = T₂−T₁`, `Δ₂₃ = T₃−T₂`, `Δ₁₃ = T₃−T₁`:
+> For any series `m`, times `T₁ ≤ T₂ ≤ T₃`, and range durations `r₁₂ = T₂−T₁`, `r₂₃ = T₃−T₂`, `r₁₃ = T₃−T₁`:
 >
 > ```promql
-> increase(m[Δ₁₂] anchored)  @ T₂
+> increase(m[r₁₂] anchored)  @ T₂
 >   +
-> increase(m[Δ₂₃] anchored)  @ T₃
+> increase(m[r₂₃] anchored)  @ T₃
 >   =
-> increase(m[Δ₁₃] anchored)  @ T₃
+> increase(m[r₁₃] anchored)  @ T₃
 > ```
 >
-> (assuming `Δ₁₂ ≤ lookback_delta` so the anchor lookup succeeds).
+> (assuming `r₁₂ ≤ lookback_delta` so the anchor lookup succeeds).
 
 This invariant is what makes anchored `increase` safely composable across contiguous time windows — splitting a wider range into adjacent sub-ranges and summing the results gives the same answer as asking for the wider range directly. Plain `rate`/`increase` doesn't satisfy this; the proposal itself notes on line 119 that *"two consecutive range selectors therefore fail to capture the increase."*
 
@@ -52,7 +52,7 @@ f(T₁, T₃] = last_in(T₁, T₃] − anchor(T₁) + resets(T₁, T₃]
 Adding the first two gives the third iff all of:
 
 1. `resets(T₁, T₂] + resets(T₂, T₃] = resets(T₁, T₃]` — holds because `(T₁, T₂]` and `(T₂, T₃]` partition `(T₁, T₃]`; every reset is counted exactly once.
-2. `last_in(T₁, T₂] = anchor(T₂)` — these are *different* lookups that agree in value. `last_in(T₁, T₂]` is the latest sample *in* the range `(T₁, T₂]` (right-closed membership, so a sample at exactly `T₂` qualifies). `anchor(T₂)` is a separate lookup *outside* the later range `(T₂, T₃]`: the latest sample with `t ≤ T₂`, within `lookback_delta`. A sample at exactly `t = T₂` is reached by both — as the last member of the earlier range, and as the anchor for the later one — without ever being a member of both ranges. Provided `Δ₁₂ ≤ lookback_delta` (so the anchor lookup doesn't time-out before reaching it), these values coincide.
+2. `last_in(T₁, T₂] = anchor(T₂)` — these are *different* lookups that agree in value. `last_in(T₁, T₂]` is the latest sample *in* the range `(T₁, T₂]` (right-closed membership, so a sample at exactly `T₂` qualifies). `anchor(T₂)` is a separate lookup *outside* the later range `(T₂, T₃]`: the latest sample with `t ≤ T₂`, within `lookback_delta`. A sample at exactly `t = T₂` is reached by both — as the last member of the earlier range, and as the anchor for the later one — without ever being a member of both ranges. Provided `r₁₂ ≤ lookback_delta` (so the anchor lookup doesn't time-out before reaching it), these values coincide.
 3. `last_in(T₂, T₃] = last_in(T₁, T₃]` — trivially true when at least one sample exists in `(T₂, T₃]`; handled by the empty-range convention otherwise.
 
 The proposal's partial-dataset example (lines 231–237) — *"The first window slightly underestimates while the second window slightly overestimates the actual increase"* — is this invariant in action. The per-window numbers aren't coincidentally canceling; they're composing.
