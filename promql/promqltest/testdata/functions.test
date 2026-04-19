@@ -523,6 +523,68 @@ eval instant at 29m ydelta(http_requests[5m])
 
 clear
 
+# Linearity invariant for the yrate/yincrease/ydelta family.
+#
+# Because these functions evaluate over a half-open range (left-inclusive on
+# the 2.53/2.55 add-yrate line, right-inclusive after align-yrate-to-3x-range-boundary),
+# two adjacent windows partition a wider one without double-counting any sample.
+# For any three timestamps T_0 < T_1 < T_2 and range durations r_1 = T_1 - T_0,
+# r_2 = T_2 - T_1:
+#
+#   yincrease(m[r_1]) @ T_1  +  yincrease(m[r_2]) @ T_2  ==  yincrease(m[r_1 + r_2]) @ T_2
+#
+# Each scenario below picks T_0, T_1, T_2 off-cadence (no sample lands on a range
+# boundary) so the expected values are identical under both boundary conventions;
+# this block should cherry-pick cleanly across the yrate branch stack.
+
+# Scenario 1: uniform counter, no resets. T_0=5s, T_1=35s, T_2=75s.
+load 10s
+	linearity_uniform{job="api"}	0+10x10
+
+eval instant at 35s yincrease(linearity_uniform[30s])
+	{job="api"} 30
+
+eval instant at 75s yincrease(linearity_uniform[40s])
+	{job="api"} 40
+
+eval instant at 75s yincrease(linearity_uniform[70s])
+	{job="api"} 70
+# 30 + 40 == 70
+
+clear
+
+# Scenario 2: counter reset in the earlier window.
+# Reset between t=40s (value 40) and t=50s (value 0). T_0=5s, T_1=65s, T_2=95s.
+load 10s
+	linearity_reset_early{job="api"}	0 10 20 30 40 0 10 20 30 40 50
+
+eval instant at 65s yincrease(linearity_reset_early[60s])
+	{job="api"} 50
+
+eval instant at 95s yincrease(linearity_reset_early[30s])
+	{job="api"} 30
+
+eval instant at 95s yincrease(linearity_reset_early[90s])
+	{job="api"} 80
+# 50 + 30 == 80
+
+clear
+
+# Scenario 3: counter reset in the later window.
+# Reset between t=60s (value 60) and t=70s (value 0). T_0=5s, T_1=45s, T_2=95s.
+load 10s
+	linearity_reset_late{job="api"}	0 10 20 30 40 50 60 0 10 20 30
+
+eval instant at 45s yincrease(linearity_reset_late[40s])
+	{job="api"} 40
+
+eval instant at 95s yincrease(linearity_reset_late[50s])
+	{job="api"} 40
+
+eval instant at 95s yincrease(linearity_reset_late[90s])
+	{job="api"} 80
+# 40 + 40 == 80
+
 # Tests for idelta().
 load 5m
 	http_requests{path="/foo"}	0 50 100 150
