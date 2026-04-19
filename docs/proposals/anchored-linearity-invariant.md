@@ -17,7 +17,7 @@ PROM-52 ([`0052-extended-range-selectors-semantics`](https://github.com/promethe
 > - `r₁` = the length of `(T₀, T₁]`, subject to `r₁ ≤ lookback_delta`
 > - `r₂` = the length of `(T₁, T₂]`
 >
-> Then the three anchored windows cover exactly the intervals their names suggest:
+> Then the three anchored windows cover exactly the intervals their names suggest. (Recall the PromQL rule: `m[duration] anchored @ T` covers `(T − duration, T]` — the `@` instant is always the *right* edge, and the range extends backward from it.)
 >
 > | Window | Covers |
 > |---|---|
