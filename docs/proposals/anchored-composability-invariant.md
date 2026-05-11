@@ -72,21 +72,23 @@ The proposal's partial-dataset example (lines 231–237) — *"The first window 
 
 ## Related prior art
 
-This property is the design goal of the Invoca `yrate` family (referenced in the PROM-52 "Other docs or links" as [Prometheus y-rate](https://docs.google.com/document/d/1CF5jhyxSD437c2aU2wHcvg88i8CjSPO3kMHsEaDRe2w/edit)). Invoca has run `yrate`-semantics in production for ~5 years with this invariant as a documented contract; `anchored + increase` converges on the same behavior via a cleaner modifier-based syntax that avoids function proliferation.
+This property is the design goal of the Invoca `yrate` family (referenced in the PROM-52 "Other docs or links" as [Prometheus y-rate](https://docs.google.com/document/d/1CF5jhyxSD437c2aU2wHcvg88i8CjSPO3kMHsEaDRe2w/edit)). Invoca has run `yrate`-semantics in production for ~5 years with this invariant as a documented contract — long enough to find that composability via additivity is the most valuable property of the family in practice: dashboards zoom across granularities without numerical surprises, recording rules roll up cleanly, and alerts fire reliably on windowed counter increases without partition-boundary artifacts. `anchored + increase` converges on the same behavior via a cleaner modifier-based syntax that avoids function proliferation.
 
 ## Proposed additions
 
 1. **User-facing docs** (`docs/feature_flags.md` and the `anchored` entry under `docs/querying/functions.md`): a short callout stating the invariant.
 2. **Proposal amendment** (`prometheus/proposals#…`): one paragraph under "How" linking the invariant to the "composability" goal.
-3. **Regression tests** (`promql/promqltest/testdata/…`): paired-window cases asserting the invariant across:
+3. **Invariant tests** (`promql/promqltest/testdata/…`): paired-window cases asserting the invariant across:
    - Regular scrape cadence, boundary timestamps aligned with sample cadence
    - Same, but shifted off-cadence (to exercise the `last_in` / `anchor` coincidence)
    - Ranges containing counter resets on both sides of `T₁`
    - Partial datasets with missing scrapes straddling `T₁`
 
+   Invoca's public fork already has a working version of these — see the `additivity_*` block in [`promql/promqltest/testdata/functions.test#L531-L593`](https://github.com/Invoca/prometheus/blob/4bf7c401e55f2376a40382e2be5fb838f4b9f517/promql/promqltest/testdata/functions.test#L531-L593). The three scenarios there cover uniform counters, a reset in the earlier window, and a reset in the later window; the partial-dataset and off-cadence cases on the list above are straightforward to add on top.
+
 ## Happy to contribute
 
-I can split this into two PRs — docs first for quick review, then tests — and port test-data patterns from our internal `yrate` suite that have exercised this invariant for years. Please let me know if a proposal amendment is preferred before or after the docs/tests land.
+I can split this into two PRs — docs first for quick review, then tests. The test patterns linked in §3 above are ready to port: they have been part of Invoca's `yrate` suite for years and were recently formalized as the `additivity_*` block on our public fork. Please let me know if a proposal amendment is preferred before or after the docs/tests land.
 
 ---
 
