@@ -84,7 +84,7 @@ This property is the design goal of the Invoca `yrate` family (referenced in the
    - Ranges containing counter resets on both sides of `T₁`
    - Partial datasets with missing scrapes straddling `T₁`
 
-   Invoca's public fork already has a working version of these — see the `additivity_*` block in [`promql/promqltest/testdata/functions.test#L531-L593`](https://github.com/Invoca/prometheus/blob/4bf7c401e55f2376a40382e2be5fb838f4b9f517/promql/promqltest/testdata/functions.test#L531-L593). The three scenarios there cover uniform counters, a reset in the earlier window, and a reset in the later window; the partial-dataset and off-cadence cases on the list above are straightforward to add on top.
+   Invoca's public fork already has a working version of these — see the `additivity_*` block in [`promql/promqltest/testdata/functions.test#L531-L593`](https://github.com/Invoca/prometheus/blob/4bf7c401e55f2376a40382e2be5fb838f4b9f517/promql/promqltest/testdata/functions.test#L531-L593). All three scenarios use deliberately off-cadence boundary timestamps (so the `last_in`/`anchor` paths get exercised the same way they would under partial-dataset/missed-scrape conditions); two of the three include counter resets, one in the earlier window and one in the later window.
 
 ## Happy to contribute
 
