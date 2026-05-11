@@ -1,4 +1,4 @@
-# `anchored`: document and test the linearity invariant that makes adjacent ranges compose
+# `anchored`: document and test the composability invariant for adjacent ranges
 
 > **Status:** Draft for internal Invoca review. Target repo once finalized:
 > `prometheus/prometheus` (new issue) and/or `prometheus/proposals`
