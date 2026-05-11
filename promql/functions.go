@@ -342,8 +342,9 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 // It always extends the preceding sample's value until the next sample, including the
 // unwritten origin sample value at the start of every time series.
 //
-// It is a linear function, meaning that for adjacent periods p0 and p1
-// ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
+// It is additive over adjacent periods, and therefore composable across any
+// partitioning of a wider range into contiguous sub-ranges. For adjacent periods
+// p0 and p1 ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
