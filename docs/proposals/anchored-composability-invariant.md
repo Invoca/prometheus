@@ -72,7 +72,7 @@ The proposal's partial-dataset example (lines 231–237) — *"The first window 
 
 ## Related prior art
 
-This property is the design goal of the Invoca `yrate` family (referenced in the PROM-52 "Other docs or links" as [Prometheus y-rate](https://docs.google.com/document/d/1CF5jhyxSD437c2aU2wHcvg88i8CjSPO3kMHsEaDRe2w/edit)). Invoca has run `yrate`-semantics in production for ~5 years with this invariant as a documented contract — long enough to find that composability via additivity is the most valuable property of the family in practice: dashboards zoom across granularities without numerical surprises, recording rules roll up cleanly, and alerts fire reliably on windowed counter increases without partition-boundary artifacts. `anchored + increase` converges on the same behavior via a cleaner modifier-based syntax that avoids function proliferation.
+This property is the design goal of the Invoca `yrate` family (referenced in the PROM-52 "Other docs or links" as [Prometheus y-rate](https://docs.google.com/document/d/1CF5jhyxSD437c2aU2wHcvg88i8CjSPO3kMHsEaDRe2w/edit)). Invoca has run `yrate`-semantics in production for ~3 years with this invariant as a documented contract — long enough to find that composability via additivity is indispensable in practice: dashboards zoom across granularities without numerical surprises, recording rules roll up cleanly, and alerts fire reliably on windowed counter increases without partition-boundary artifacts. `anchored + increase` converges on the same behavior via a cleaner modifier-based syntax that avoids function proliferation.
 
 ## Proposed additions
 
