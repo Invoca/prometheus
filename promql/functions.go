@@ -1908,10 +1908,12 @@ func init() {
 	// Values:
 	//   "1"       - replace rate/increase/delta with xrate/xincrease/xdelta
 	//               AND remove the x* names (legacy behaviour).
-	//   "x", "X"  - point rate/increase/delta at xrate/xincrease/xdelta but
-	//               keep the x* names available.
-	//   "2",      - point rate/increase/delta at yrate/yincrease/ydelta but
-	//   "y", "Y"    keep the y* names available.
+	//   "x", "X"  - point rate/increase/delta at xrate/xincrease/xdelta;
+	//               keep the x* names; preserve upstream implementations as
+	//               _rate/_increase/_delta.
+	//   "2",      - point rate/increase/delta at yrate/yincrease/ydelta;
+	//   "y", "Y"    keep the y* (and x*) names; preserve upstream
+	//               implementations as _rate/_increase/_delta.
 	switch os.Getenv("REPLACE_RATE_FUNCS") {
 	case "1":
 		FunctionCalls["delta"] = FunctionCalls["xdelta"]
@@ -1933,30 +1935,56 @@ func init() {
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
 
 	case "x", "X":
+		preserveOriginalRateFuncs()
 		repointParserFunctions("delta", "xdelta")
 		repointParserFunctions("increase", "xincrease")
 		repointParserFunctions("rate", "xrate")
 		repointFunction("delta", "xdelta")
 		repointFunction("increase", "xincrease")
 		repointFunction("rate", "xrate")
-		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta (and left the x* names available as well).")
+		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta; originals available as _rate/_increase/_delta; x* names also available.")
 
 	case "2", "y", "Y":
+		preserveOriginalRateFuncs()
 		repointParserFunctions("delta", "ydelta")
 		repointParserFunctions("increase", "yincrease")
 		repointParserFunctions("rate", "yrate")
 		repointFunction("delta", "ydelta")
 		repointFunction("increase", "yincrease")
 		repointFunction("rate", "yrate")
-		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta (and left the y* names available as well).")
+		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta; originals available as _rate/_increase/_delta; y* and x* names also available.")
 	}
 }
 
-// repointParserFunctions makes the parser entry for name resolve to the
-// entry currently registered under newName (e.g. "rate" -> "xrate").
-// It leaves the newName entry in place.
+// preserveOriginalRateFuncs copies the upstream rate/increase/delta parser and
+// evaluator entries to _rate/_increase/_delta before repointing the standard
+// names at the xrate or yrate family.
+func preserveOriginalRateFuncs() {
+	copyParserFunction("delta", "_delta")
+	copyParserFunction("increase", "_increase")
+	copyParserFunction("rate", "_rate")
+	copyFunctionCall("delta", "_delta")
+	copyFunctionCall("increase", "_increase")
+	copyFunctionCall("rate", "_rate")
+}
+
+func copyParserFunction(fromName, toName string) {
+	result := *parser.Functions[fromName]
+	result.Name = toName
+	parser.Functions[toName] = &result
+}
+
+func copyFunctionCall(fromName, toName string) {
+	FunctionCalls[toName] = FunctionCalls[fromName]
+}
+
+// repointParserFunctions makes name resolve to newName's implementation while
+// keeping name as the displayed/parser function name. A copy is made so the
+// newName entry is not mutated.
 func repointParserFunctions(name, newName string) {
-	parser.Functions[name] = parser.Functions[newName]
+	result := *parser.Functions[newName]
+	result.Name = name
+	parser.Functions[name] = &result
 }
 
 // repointFunction makes the FunctionCalls entry for name dispatch to the
