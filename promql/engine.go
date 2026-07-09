@@ -1026,6 +1026,11 @@ func getTimeRangesForSelector(s *parser.EvalStmt, n *parser.VectorSelector, path
 	start -= offsetMilliseconds
 	end -= offsetMilliseconds
 
+	f, ok := parser.Functions[extractFuncFromPath(path)]
+	if ok && f.ExtRange {
+		start -= durationMilliseconds(s.LookbackDelta)
+	}
+
 	return start, end
 }
 
@@ -1065,6 +1070,13 @@ func (ng *Engine) populateSeries(ctx context.Context, querier storage.Querier, s
 			}
 			evalRange = 0
 			hints.By, hints.Grouping = extractGroupsFromPath(path)
+			// Include an extra lookbackDelta iff this is the argument to an
+			// extended range function. Extended ranges include one extra
+			// point, this is how far back we need to look for it.
+			f, ok := parser.Functions[hints.Func]
+			if ok && f.ExtRange {
+				hints.Start -= durationMilliseconds(ng.lookbackDelta)
+			}
 			n.UnexpandedSeriesSet = querier.Select(ctx, false, hints, n.LabelMatchers...)
 		case *parser.MatrixSelector:
 			evalRange = n.Range
@@ -1755,7 +1767,7 @@ func (ev *evaluator) smoothSeries(series []storage.Series, offset time.Duration,
 			matrixStart := dataTS - lb
 			matrixEnd := dataTS + lb
 
-			floats, hists, _ = ev.matrixIterSlice(it, matrixStart, matrixEnd, floats, hists, nil)
+			floats, hists, _ = ev.matrixIterSlice(it, matrixStart, matrixEnd, false, floats, hists, nil)
 			if len(floats) == 0 && len(hists) == 0 {
 				continue
 			}
@@ -2236,6 +2248,10 @@ func (ev *evaluator) eval(ctx context.Context, expr parser.Expr) (parser.Value, 
 		case selVS.Smoothed:
 			bufferRange += durationMilliseconds(2 * ev.lookbackDelta)
 		}
+		if e.Func.ExtRange {
+			bufferRange += durationMilliseconds(ev.lookbackDelta)
+			stepRange += durationMilliseconds(ev.lookbackDelta)
+		}
 
 		it := storage.NewBuffer(bufferRange)
 		var chkIter chunkenc.Iterator
@@ -2316,7 +2332,7 @@ func (ev *evaluator) eval(ctx context.Context, expr parser.Expr) (parser.Value, 
 						mint -= durationMilliseconds(ev.lookbackDelta)
 						maxt += durationMilliseconds(ev.lookbackDelta)
 					}
-					floats, histograms, startTimestamps = ev.matrixIterSlice(it, mint, maxt, floats, histograms, startTimestamps)
+					floats, histograms, startTimestamps = ev.matrixIterSlice(it, mint, maxt, e.Func.ExtRange, floats, histograms, startTimestamps)
 				}
 				if len(floats)+len(histograms) == 0 {
 					continue
@@ -2844,7 +2860,7 @@ func (ev *evaluator) matrixSelector(ctx context.Context, node *parser.MatrixSele
 			Metric: series[i].Labels(),
 		}
 
-		ss.Floats, ss.Histograms, _ = ev.matrixIterSlice(it, mint, maxt, nil, nil, nil)
+		ss.Floats, ss.Histograms, _ = ev.matrixIterSlice(it, mint, maxt, false, nil, nil, nil)
 		switch {
 		case vs.Anchored:
 			if ss.Histograms != nil {
@@ -2887,10 +2903,11 @@ func (ev *evaluator) matrixSelector(ctx context.Context, node *parser.MatrixSele
 // Typically this is accomplished by passing in either all empty slices or the
 // values returned by a previous call.
 func (ev *evaluator) matrixIterSlice(
-	it *storage.BufferedSeriesIterator, mint, maxt int64,
+	it *storage.BufferedSeriesIterator, mint, maxt int64, extRange bool,
 	floats []FPoint, histograms []HPoint, startTimestamps *StartTimestamps,
 ) ([]FPoint, []HPoint, *StartTimestamps) {
 	mintFloats, mintHistograms := mint, mint
+	extMint := mint - durationMilliseconds(ev.lookbackDelta)
 
 	// First floats...
 	if len(floats) > 0 && floats[len(floats)-1].T > mint {
@@ -2900,7 +2917,17 @@ func (ev *evaluator) matrixIterSlice(
 		//   (b) the number of samples is relatively small.
 		// so a linear search will be as fast as a binary search.
 		var drop int
-		for drop = 0; floats[drop].T <= mint; drop++ {
+		if extRange {
+			// This is an argument to an extended range function: first go past mint.
+			for drop = 0; drop < len(floats) && floats[drop].T <= mint; drop++ {
+			}
+			// Then, go back one sample if within lookbackDelta of mint.
+			if drop > 0 && floats[drop-1].T >= extMint {
+				drop--
+			}
+		} else {
+			for drop = 0; floats[drop].T <= mint; drop++ {
+			}
 		}
 		ev.currentSamples -= drop
 		copy(floats, floats[drop:])
@@ -2976,6 +3003,7 @@ func (ev *evaluator) matrixIterSlice(
 	}
 
 	buf := it.Buffer()
+	appendedPointBeforeMint := len(floats) > 0
 loop:
 	for {
 		switch buf.Next() {
@@ -3013,19 +3041,46 @@ loop:
 			if value.IsStaleNaN(f) {
 				continue loop
 			}
-			// Values in the buffer are guaranteed to be smaller than maxt.
-			if t > mintFloats {
-				ev.currentSamples++
-				if ev.currentSamples > ev.maxSamples {
-					ev.error(ErrTooManySamples(env))
-				}
-				if floats == nil {
-					floats = getFPointSlice(16)
-				}
-				floats = append(floats, FPoint{T: t, F: f})
+			if extRange {
+				// This is the argument to an extended range function: if any
+				// point exists at or before range start, add it and then keep
+				// replacing it with later points while not yet (strictly)
+				// inside the range.
+				if t > mintFloats || !appendedPointBeforeMint {
+					ev.currentSamples++
+					if ev.currentSamples > ev.maxSamples {
+						ev.error(ErrTooManySamples(env))
+					}
+					if floats == nil {
+						floats = getFPointSlice(16)
+					}
+					floats = append(floats, FPoint{T: t, F: f})
+					appendedPointBeforeMint = true
 
-				if startTimestamps != nil {
-					startTimestamps.Floats = append(startTimestamps.Floats, buf.AtST())
+					if startTimestamps != nil {
+						startTimestamps.Floats = append(startTimestamps.Floats, buf.AtST())
+					}
+				} else if len(floats) > 0 {
+					floats[len(floats)-1] = FPoint{T: t, F: f}
+					if startTimestamps != nil {
+						startTimestamps.Floats[len(startTimestamps.Floats)-1] = buf.AtST()
+					}
+				}
+			} else {
+				// Values in the buffer are guaranteed to be smaller than maxt.
+				if t > mintFloats {
+					ev.currentSamples++
+					if ev.currentSamples > ev.maxSamples {
+						ev.error(ErrTooManySamples(env))
+					}
+					if floats == nil {
+						floats = getFPointSlice(16)
+					}
+					floats = append(floats, FPoint{T: t, F: f})
+
+					if startTimestamps != nil {
+						startTimestamps.Floats = append(startTimestamps.Floats, buf.AtST())
+					}
 				}
 			}
 		}
