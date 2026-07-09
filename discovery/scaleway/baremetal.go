@@ -1,4 +1,4 @@
-// Copyright 2021 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,12 +17,9 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/version"
 	"github.com/scaleway/scaleway-sdk-go/api/baremetal/v1"
@@ -71,16 +68,9 @@ func newBaremetalDiscovery(conf *SDConfig) (*baremetalDiscovery, error) {
 		tagsFilter: conf.TagsFilter,
 	}
 
-	rt, err := config.NewRoundTripperFromConfig(conf.HTTPClientConfig, "scaleway_sd")
+	client, err := newScalewayHTTPClient(conf)
 	if err != nil {
 		return nil, err
-	}
-
-	if conf.SecretKeyFile != "" {
-		rt, err = newAuthTokenFileRoundTripper(conf.SecretKeyFile, rt)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	profile, err := loadProfile(conf)
@@ -89,11 +79,8 @@ func newBaremetalDiscovery(conf *SDConfig) (*baremetalDiscovery, error) {
 	}
 
 	d.client, err = scw.NewClient(
-		scw.WithHTTPClient(&http.Client{
-			Transport: rt,
-			Timeout:   time.Duration(conf.RefreshInterval),
-		}),
-		scw.WithUserAgent(fmt.Sprintf("Prometheus/%s", version.Version)),
+		scw.WithHTTPClient(client),
+		scw.WithUserAgent(version.PrometheusUserAgent()),
 		scw.WithProfile(profile),
 	)
 	if err != nil {

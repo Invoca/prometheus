@@ -1,4 +1,4 @@
-// Copyright 2024 Prometheus Team
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -40,7 +40,9 @@ func TestToLabels(t *testing.T) {
 		v2Symbols := []string{"", "__name__", "metric1", "foo", "bar"}
 		ts := writev2.TimeSeries{LabelsRefs: []uint32{1, 2, 3, 4}}
 		b := labels.NewScratchBuilder(2)
-		require.Equal(t, expected, ts.ToLabels(&b, v2Symbols))
+		result, err := ts.ToLabels(&b, v2Symbols)
+		require.NoError(t, err)
+		require.Equal(t, expected, result)
 		// No need for FromLabels in our prod code as we use symbol table to do so.
 	})
 }
@@ -128,19 +130,41 @@ func TestToMetadata(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			ts := writev2.TimeSeries{Metadata: tc.input}
-			require.Equal(t, tc.expected, ts.ToMetadata(sym.Symbols()))
+			meta, err := ts.ToMetadata(sym.Symbols())
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, meta)
 		})
 	}
+
+	t.Run("out of bounds unit ref", func(t *testing.T) {
+		ts := writev2.TimeSeries{Metadata: writev2.Metadata{UnitRef: 999}}
+		_, err := ts.ToMetadata(sym.Symbols())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "metadata unit_ref 999 outside of symbols table")
+	})
+
+	t.Run("out of bounds help ref", func(t *testing.T) {
+		ts := writev2.TimeSeries{Metadata: writev2.Metadata{HelpRef: 999}}
+		_, err := ts.ToMetadata(sym.Symbols())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "metadata help_ref 999 outside of symbols table")
+	})
+
+	t.Run("empty symbols table", func(t *testing.T) {
+		ts := writev2.TimeSeries{Metadata: writev2.Metadata{}}
+		_, err := ts.ToMetadata([]string{})
+		require.Error(t, err)
+	})
 }
 
 func TestToHistogram_Empty(t *testing.T) {
 	t.Run("v1", func(t *testing.T) {
-		require.NotNilf(t, prompb.Histogram{}.ToIntHistogram(), "")
-		require.NotNilf(t, prompb.Histogram{}.ToFloatHistogram(), "")
+		require.NotNil(t, prompb.Histogram{}.ToIntHistogram())
+		require.NotNil(t, prompb.Histogram{}.ToFloatHistogram())
 	})
 	t.Run("v2", func(t *testing.T) {
-		require.NotNilf(t, writev2.Histogram{}.ToIntHistogram(), "")
-		require.NotNilf(t, writev2.Histogram{}.ToFloatHistogram(), "")
+		require.NotNil(t, writev2.Histogram{}.ToIntHistogram())
+		require.NotNil(t, writev2.Histogram{}.ToFloatHistogram())
 	})
 }
 
@@ -196,17 +220,14 @@ func testFloatHistogram() histogram.FloatHistogram {
 
 func TestFromIntToFloatOrIntHistogram(t *testing.T) {
 	t.Run("v1", func(t *testing.T) {
-		// v1 does not support nhcb.
-		testIntHistWithoutNHCB := testIntHistogram()
-		testIntHistWithoutNHCB.CustomValues = nil
-		testFloatHistWithoutNHCB := testFloatHistogram()
-		testFloatHistWithoutNHCB.CustomValues = nil
+		testIntHist := testIntHistogram()
+		testFloatHist := testFloatHistogram()
 
-		h := prompb.FromIntHistogram(123, &testIntHistWithoutNHCB)
+		h := prompb.FromIntHistogram(123, &testIntHist)
 		require.False(t, h.IsFloatHistogram())
 		require.Equal(t, int64(123), h.Timestamp)
-		require.Equal(t, testIntHistWithoutNHCB, *h.ToIntHistogram())
-		require.Equal(t, testFloatHistWithoutNHCB, *h.ToFloatHistogram())
+		require.Equal(t, testIntHist, *h.ToIntHistogram())
+		require.Equal(t, testFloatHist, *h.ToFloatHistogram())
 	})
 	t.Run("v2", func(t *testing.T) {
 		testIntHist := testIntHistogram()
@@ -222,15 +243,13 @@ func TestFromIntToFloatOrIntHistogram(t *testing.T) {
 
 func TestFromFloatToFloatHistogram(t *testing.T) {
 	t.Run("v1", func(t *testing.T) {
-		// v1 does not support nhcb.
-		testFloatHistWithoutNHCB := testFloatHistogram()
-		testFloatHistWithoutNHCB.CustomValues = nil
+		testFloatHist := testFloatHistogram()
 
-		h := prompb.FromFloatHistogram(123, &testFloatHistWithoutNHCB)
+		h := prompb.FromFloatHistogram(123, &testFloatHist)
 		require.True(t, h.IsFloatHistogram())
 		require.Equal(t, int64(123), h.Timestamp)
 		require.Nil(t, h.ToIntHistogram())
-		require.Equal(t, testFloatHistWithoutNHCB, *h.ToFloatHistogram())
+		require.Equal(t, testFloatHist, *h.ToFloatHistogram())
 	})
 	t.Run("v2", func(t *testing.T) {
 		testFloatHist := testFloatHistogram()

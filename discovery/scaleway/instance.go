@@ -1,4 +1,4 @@
-// Copyright 2021 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,15 +17,13 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/version"
 	"github.com/scaleway/scaleway-sdk-go/api/instance/v1"
+	ipam "github.com/scaleway/scaleway-sdk-go/api/ipam/v1"
 	"github.com/scaleway/scaleway-sdk-go/scw"
 
 	"github.com/prometheus/prometheus/discovery/refresh"
@@ -35,28 +33,30 @@ import (
 const (
 	instanceLabelPrefix = metaLabelPrefix + "instance_"
 
-	instanceBootTypeLabel          = instanceLabelPrefix + "boot_type"
-	instanceHostnameLabel          = instanceLabelPrefix + "hostname"
-	instanceIDLabel                = instanceLabelPrefix + "id"
-	instanceImageArchLabel         = instanceLabelPrefix + "image_arch"
-	instanceImageIDLabel           = instanceLabelPrefix + "image_id"
-	instanceImageNameLabel         = instanceLabelPrefix + "image_name"
-	instanceLocationClusterID      = instanceLabelPrefix + "location_cluster_id"
-	instanceLocationHypervisorID   = instanceLabelPrefix + "location_hypervisor_id"
-	instanceLocationNodeID         = instanceLabelPrefix + "location_node_id"
-	instanceNameLabel              = instanceLabelPrefix + "name"
-	instanceOrganizationLabel      = instanceLabelPrefix + "organization_id"
-	instancePrivateIPv4Label       = instanceLabelPrefix + "private_ipv4"
-	instanceProjectLabel           = instanceLabelPrefix + "project_id"
-	instancePublicIPv4Label        = instanceLabelPrefix + "public_ipv4"
-	instancePublicIPv6Label        = instanceLabelPrefix + "public_ipv6"
-	instanceSecurityGroupIDLabel   = instanceLabelPrefix + "security_group_id"
-	instanceSecurityGroupNameLabel = instanceLabelPrefix + "security_group_name"
-	instanceStateLabel             = instanceLabelPrefix + "status"
-	instanceTagsLabel              = instanceLabelPrefix + "tags"
-	instanceTypeLabel              = instanceLabelPrefix + "type"
-	instanceZoneLabel              = instanceLabelPrefix + "zone"
-	instanceRegionLabel            = instanceLabelPrefix + "region"
+	instanceBootTypeLabel            = instanceLabelPrefix + "boot_type"
+	instanceHostnameLabel            = instanceLabelPrefix + "hostname"
+	instanceIDLabel                  = instanceLabelPrefix + "id"
+	instanceImageArchLabel           = instanceLabelPrefix + "image_arch"
+	instanceImageIDLabel             = instanceLabelPrefix + "image_id"
+	instanceImageNameLabel           = instanceLabelPrefix + "image_name"
+	instanceLocationClusterID        = instanceLabelPrefix + "location_cluster_id"
+	instanceLocationHypervisorID     = instanceLabelPrefix + "location_hypervisor_id"
+	instanceLocationNodeID           = instanceLabelPrefix + "location_node_id"
+	instanceNameLabel                = instanceLabelPrefix + "name"
+	instanceOrganizationLabel        = instanceLabelPrefix + "organization_id"
+	instancePrivateIPv4Label         = instanceLabelPrefix + "private_ipv4"
+	instanceProjectLabel             = instanceLabelPrefix + "project_id"
+	instancePublicIPv4Label          = instanceLabelPrefix + "public_ipv4"
+	instancePublicIPv6Label          = instanceLabelPrefix + "public_ipv6"
+	instancePublicIPv4AddressesLabel = instanceLabelPrefix + "public_ipv4_addresses"
+	instancePublicIPv6AddressesLabel = instanceLabelPrefix + "public_ipv6_addresses"
+	instanceSecurityGroupIDLabel     = instanceLabelPrefix + "security_group_id"
+	instanceSecurityGroupNameLabel   = instanceLabelPrefix + "security_group_name"
+	instanceStateLabel               = instanceLabelPrefix + "status"
+	instanceTagsLabel                = instanceLabelPrefix + "tags"
+	instanceTypeLabel                = instanceLabelPrefix + "type"
+	instanceZoneLabel                = instanceLabelPrefix + "zone"
+	instanceRegionLabel              = instanceLabelPrefix + "region"
 )
 
 type instanceDiscovery struct {
@@ -82,16 +82,9 @@ func newInstanceDiscovery(conf *SDConfig) (*instanceDiscovery, error) {
 		tagsFilter: conf.TagsFilter,
 	}
 
-	rt, err := config.NewRoundTripperFromConfig(conf.HTTPClientConfig, "scaleway_sd")
+	client, err := newScalewayHTTPClient(conf)
 	if err != nil {
 		return nil, err
-	}
-
-	if conf.SecretKeyFile != "" {
-		rt, err = newAuthTokenFileRoundTripper(conf.SecretKeyFile, rt)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	profile, err := loadProfile(conf)
@@ -100,11 +93,8 @@ func newInstanceDiscovery(conf *SDConfig) (*instanceDiscovery, error) {
 	}
 
 	d.client, err = scw.NewClient(
-		scw.WithHTTPClient(&http.Client{
-			Transport: rt,
-			Timeout:   time.Duration(conf.RefreshInterval),
-		}),
-		scw.WithUserAgent(fmt.Sprintf("Prometheus/%s", version.Version)),
+		scw.WithHTTPClient(client),
+		scw.WithUserAgent(version.PrometheusUserAgent()),
 		scw.WithProfile(profile),
 	)
 	if err != nil {
@@ -115,7 +105,8 @@ func newInstanceDiscovery(conf *SDConfig) (*instanceDiscovery, error) {
 }
 
 func (d *instanceDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
-	api := instance.NewAPI(d.client)
+	instanceAPI := instance.NewAPI(d.client)
+	ipamAPI := ipam.NewAPI(d.client)
 
 	req := &instance.ListServersRequest{}
 
@@ -127,7 +118,12 @@ func (d *instanceDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group, 
 		req.Tags = d.tagsFilter
 	}
 
-	servers, err := api.ListServers(req, scw.WithAllPages(), scw.WithContext(ctx))
+	servers, err := instanceAPI.ListServers(req, scw.WithAllPages(), scw.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+
+	privateNICIPByID, err := privateNICIPs(ctx, ipamAPI, servers.Servers)
 	if err != nil {
 		return nil, err
 	}
@@ -175,19 +171,61 @@ func (d *instanceDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group, 
 		}
 
 		addr := ""
+		if len(server.PublicIPs) > 0 {
+			var ipv4Addresses []string
+			var ipv6Addresses []string
+
+			for _, ip := range server.PublicIPs {
+				switch ip.Family {
+				case instance.ServerIPIPFamilyInet:
+					ipv4Addresses = append(ipv4Addresses, ip.Address.String())
+				case instance.ServerIPIPFamilyInet6:
+					ipv6Addresses = append(ipv6Addresses, ip.Address.String())
+				}
+			}
+
+			if len(ipv6Addresses) > 0 {
+				labels[instancePublicIPv6AddressesLabel] = model.LabelValue(
+					separator +
+						strings.Join(ipv6Addresses, separator) +
+						separator)
+			}
+			if len(ipv4Addresses) > 0 {
+				labels[instancePublicIPv4AddressesLabel] = model.LabelValue(
+					separator +
+						strings.Join(ipv4Addresses, separator) +
+						separator)
+			}
+		}
+
 		if server.IPv6 != nil { //nolint:staticcheck
 			labels[instancePublicIPv6Label] = model.LabelValue(server.IPv6.Address.String()) //nolint:staticcheck
 			addr = server.IPv6.Address.String()                                              //nolint:staticcheck
 		}
 
 		if server.PublicIP != nil { //nolint:staticcheck
-			labels[instancePublicIPv4Label] = model.LabelValue(server.PublicIP.Address.String()) //nolint:staticcheck
-			addr = server.PublicIP.Address.String()                                              //nolint:staticcheck
+			if server.PublicIP.Family != instance.ServerIPIPFamilyInet6 { //nolint:staticcheck
+				labels[instancePublicIPv4Label] = model.LabelValue(server.PublicIP.Address.String()) //nolint:staticcheck
+			}
+			addr = server.PublicIP.Address.String() //nolint:staticcheck
 		}
 
 		if server.PrivateIP != nil {
 			labels[instancePrivateIPv4Label] = model.LabelValue(*server.PrivateIP)
 			addr = *server.PrivateIP
+		}
+
+		if addr == "" {
+			for _, privateNIC := range server.PrivateNics {
+				if privateNIC == nil {
+					continue
+				}
+				if privateIP := privateNICIPByID[privateNIC.ID]; privateIP != "" {
+					labels[instancePrivateIPv4Label] = model.LabelValue(privateIP)
+					addr = privateIP
+					break
+				}
+			}
 		}
 
 		if addr != "" {
@@ -198,4 +236,44 @@ func (d *instanceDiscovery) refresh(ctx context.Context) ([]*targetgroup.Group, 
 	}
 
 	return []*targetgroup.Group{{Source: "scaleway", Targets: targets}}, nil
+}
+
+func privateNICIPs(ctx context.Context, api *ipam.API, servers []*instance.Server) (map[string]string, error) {
+	privateNICIDsByRegion := map[scw.Region][]string{}
+	for _, server := range servers {
+		if server.PrivateIP != nil || server.PublicIP != nil || server.IPv6 != nil { //nolint:staticcheck
+			continue
+		}
+
+		region, err := server.Zone.Region()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, privateNIC := range server.PrivateNics {
+			if privateNIC != nil && privateNIC.ID != "" {
+				privateNICIDsByRegion[region] = append(privateNICIDsByRegion[region], privateNIC.ID)
+			}
+		}
+	}
+
+	privateNICIPs := map[string]string{}
+	for region, privateNICIDs := range privateNICIDsByRegion {
+		ips, err := api.ListIPs(&ipam.ListIPsRequest{
+			Region:        region,
+			ResourceIDs:   privateNICIDs,
+			ResourceTypes: []ipam.ResourceType{ipam.ResourceTypeInstancePrivateNic},
+		}, scw.WithAllPages(), scw.WithContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		for _, ip := range ips.IPs {
+			if ip != nil && ip.Resource != nil && !ip.IsIPv6 && ip.Address.IP != nil {
+				privateNICIPs[ip.Resource.ID] = ip.Address.IP.String()
+			}
+		}
+	}
+
+	return privateNICIPs, nil
 }

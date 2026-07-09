@@ -1,4 +1,4 @@
-// Copyright 2017 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -25,6 +25,13 @@ func mustNewMatcher(t *testing.T, mType MatchType, value string) *Matcher {
 	m, err := NewMatcher(mType, "test_label_name", value)
 	require.NoError(t, err)
 	return m
+}
+
+func (m *Matcher) hasCaseInsensitivePrefix() bool {
+	if m.re == nil {
+		return false
+	}
+	return m.re.caseInsensitivePrefix
 }
 
 func TestMatcher(t *testing.T) {
@@ -137,8 +144,9 @@ func TestInverse(t *testing.T) {
 
 func TestPrefix(t *testing.T) {
 	for i, tc := range []struct {
-		matcher *Matcher
-		prefix  string
+		matcher               *Matcher
+		prefix                string
+		caseInsensitivePrefix bool
 	}{
 		{
 			matcher: mustNewMatcher(t, MatchEqual, "abc"),
@@ -180,9 +188,15 @@ func TestPrefix(t *testing.T) {
 			matcher: mustNewMatcher(t, MatchRegexp, ".+def"),
 			prefix:  "",
 		},
+		{
+			matcher:               mustNewMatcher(t, MatchNotRegexp, "(?i)abc.+"),
+			prefix:                "ABC",
+			caseInsensitivePrefix: true,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d: %s", i, tc.matcher), func(t *testing.T) {
 			require.Equal(t, tc.prefix, tc.matcher.Prefix())
+			require.Equal(t, tc.caseInsensitivePrefix, tc.matcher.hasCaseInsensitivePrefix())
 		})
 	}
 }
@@ -223,6 +237,13 @@ func BenchmarkNewMatcher(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i <= b.N; i++ {
 			NewMatcher(MatchRegexp, "foo", "bar")
+		}
+	})
+	b.Run("complex regex", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i <= b.N; i++ {
+			NewMatcher(MatchRegexp, "foo", "((.*)(bar|b|buzz)(.+)|foo){10}")
 		}
 	})
 }
