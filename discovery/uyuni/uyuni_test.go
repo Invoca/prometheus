@@ -1,4 +1,4 @@
-// Copyright 2020 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,9 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
@@ -48,7 +47,11 @@ func testUpdateServices(respHandler http.HandlerFunc) ([]*targetgroup.Group, err
 	defer metrics.Unregister()
 	defer refreshMetrics.Unregister()
 
-	md, err := NewDiscovery(&conf, nil, metrics)
+	md, err := NewDiscovery(&conf, discovery.DiscovererOptions{
+		Logger:  nil,
+		Metrics: metrics,
+		SetName: "uyuni",
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +60,10 @@ func testUpdateServices(respHandler http.HandlerFunc) ([]*targetgroup.Group, err
 }
 
 func TestUyuniSDHandleError(t *testing.T) {
+	t.Parallel()
 	var (
 		errTesting  = "unable to login to Uyuni API: request error: bad status code - 500"
-		respHandler = func(w http.ResponseWriter, r *http.Request) {
+		respHandler = func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Header().Set("Content-Type", "application/xml")
 			io.WriteString(w, ``)
@@ -72,10 +76,11 @@ func TestUyuniSDHandleError(t *testing.T) {
 }
 
 func TestUyuniSDLogin(t *testing.T) {
+	t.Parallel()
 	var (
 		errTesting  = "unable to get the managed system groups information of monitored clients: request error: bad status code - 500"
 		call        = 0
-		respHandler = func(w http.ResponseWriter, r *http.Request) {
+		respHandler = func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/xml")
 			switch call {
 			case 0:
@@ -104,9 +109,10 @@ func TestUyuniSDLogin(t *testing.T) {
 }
 
 func TestUyuniSDSkipLogin(t *testing.T) {
+	t.Parallel()
 	var (
 		errTesting  = "unable to get the managed system groups information of monitored clients: request error: bad status code - 500"
-		respHandler = func(w http.ResponseWriter, r *http.Request) {
+		respHandler = func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Header().Set("Content-Type", "application/xml")
 			io.WriteString(w, ``)
@@ -128,7 +134,11 @@ func TestUyuniSDSkipLogin(t *testing.T) {
 	defer metrics.Unregister()
 	defer refreshMetrics.Unregister()
 
-	md, err := NewDiscovery(&conf, nil, metrics)
+	md, err := NewDiscovery(&conf, discovery.DiscovererOptions{
+		Logger:  nil,
+		Metrics: metrics,
+		SetName: "uyuni",
+	})
 	if err != nil {
 		t.Error(err)
 	}

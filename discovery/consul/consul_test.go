@@ -1,4 +1,4 @@
-// Copyright 2015 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,13 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 
 	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
@@ -49,6 +49,7 @@ func NewTestMetrics(t *testing.T, conf discovery.Config, reg prometheus.Register
 }
 
 func TestConfiguredService(t *testing.T) {
+	t.Parallel()
 	conf := &SDConfig{
 		Services: []string{"configuredServiceName"},
 	}
@@ -64,6 +65,7 @@ func TestConfiguredService(t *testing.T) {
 }
 
 func TestConfiguredServiceWithTag(t *testing.T) {
+	t.Parallel()
 	conf := &SDConfig{
 		Services:    []string{"configuredServiceName"},
 		ServiceTags: []string{"http"},
@@ -87,6 +89,7 @@ func TestConfiguredServiceWithTag(t *testing.T) {
 }
 
 func TestConfiguredServiceWithTags(t *testing.T) {
+	t.Parallel()
 	type testcase struct {
 		// What we've configured to watch.
 		conf *SDConfig
@@ -174,6 +177,7 @@ func TestConfiguredServiceWithTags(t *testing.T) {
 }
 
 func TestNonConfiguredService(t *testing.T) {
+	t.Parallel()
 	conf := &SDConfig{}
 
 	metrics := NewTestMetrics(t, conf, prometheus.NewRegistry())
@@ -252,6 +256,8 @@ func newServer(t *testing.T) (*httptest.Server, *SDConfig) {
 		case "/v1/catalog/services?index=1&wait=120000ms":
 			time.Sleep(5 * time.Second)
 			response = ServicesTestAnswer
+		case "/v1/catalog/services?filter=NodeMeta.rack_name+%3D%3D+%222304%22&index=1&wait=120000ms":
+			response = ServicesTestAnswer
 		default:
 			t.Errorf("Unhandled consul call: %s", r.URL)
 		}
@@ -270,7 +276,7 @@ func newServer(t *testing.T) (*httptest.Server, *SDConfig) {
 }
 
 func newDiscovery(t *testing.T, config *SDConfig) *Discovery {
-	logger := log.NewNopLogger()
+	logger := promslog.NewNopLogger()
 
 	metrics := NewTestMetrics(t, config, prometheus.NewRegistry())
 
@@ -292,8 +298,9 @@ func checkOneTarget(t *testing.T, tg []*targetgroup.Group) {
 
 // Watch all the services in the catalog.
 func TestAllServices(t *testing.T) {
+	t.Parallel()
 	stub, config := newServer(t)
-	defer stub.Close()
+	t.Cleanup(stub.Close)
 
 	d := newDiscovery(t, config)
 
@@ -311,8 +318,9 @@ func TestAllServices(t *testing.T) {
 
 // targetgroup with no targets is emitted if no services were discovered.
 func TestNoTargets(t *testing.T) {
+	t.Parallel()
 	stub, config := newServer(t)
-	defer stub.Close()
+	t.Cleanup(stub.Close)
 	config.ServiceTags = []string{"missing"}
 
 	d := newDiscovery(t, config)
@@ -332,8 +340,9 @@ func TestNoTargets(t *testing.T) {
 
 // Watch only the test service.
 func TestOneService(t *testing.T) {
+	t.Parallel()
 	stub, config := newServer(t)
-	defer stub.Close()
+	t.Cleanup(stub.Close)
 
 	config.Services = []string{"test"}
 	d := newDiscovery(t, config)
@@ -347,8 +356,9 @@ func TestOneService(t *testing.T) {
 
 // Watch the test service with a specific tag and node-meta.
 func TestAllOptions(t *testing.T) {
+	t.Parallel()
 	stub, config := newServer(t)
-	defer stub.Close()
+	t.Cleanup(stub.Close)
 
 	config.Services = []string{"test"}
 	config.NodeMeta = map[string]string{"rack_name": "2304"}
@@ -369,21 +379,201 @@ func TestAllOptions(t *testing.T) {
 	<-ch
 }
 
+// TestFilterOption verifies that when services and filter are both configured, the Catalog API
+// is still called and receives the filter parameter, while the Health API does not.
+func TestFilterOption(t *testing.T) {
+	t.Parallel()
+	var (
+		catalogCalled bool
+		catalogFilter string
+		healthCalled  bool
+		healthFilter  string
+	)
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Consul-Index", "1")
+		switch r.URL.Path {
+		case "/v1/agent/self":
+			w.Write([]byte(AgentAnswer))
+		case "/v1/catalog/services":
+			catalogCalled = true
+			catalogFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(`{"test": []}`))
+		case "/v1/health/service/test":
+			healthCalled = true
+			healthFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(ServiceTestAnswer))
+		default:
+			t.Errorf("Unhandled consul call: %s", r.URL)
+		}
+	}))
+	t.Cleanup(stub.Close)
+
+	stuburl, err := url.Parse(stub.URL)
+	require.NoError(t, err)
+
+	cfg := &SDConfig{
+		Server:          stuburl.Host,
+		Services:        []string{"test"},
+		Filter:          `NodeMeta.rack_name == "2304"`,
+		RefreshInterval: model.Duration(1 * time.Second),
+	}
+
+	d := newDiscovery(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan []*targetgroup.Group)
+	go func() {
+		d.Run(ctx, ch)
+		close(ch)
+	}()
+	checkOneTarget(t, <-ch)
+	// All handler writes happened-before the channel receive above.
+	require.True(t, catalogCalled, "Catalog endpoint should be called when filter is set alongside services.")
+	require.Equal(t, `NodeMeta.rack_name == "2304"`, catalogFilter, "Catalog should receive the filter parameter.")
+	require.True(t, healthCalled, "Health endpoint should be called.")
+	require.Empty(t, healthFilter, "Health endpoint should not receive the catalog filter.")
+	cancel()
+	for range ch {
+	}
+}
+
+// TestHealthFilterOption verifies that health_filter is passed to the Health API and not to
+// the Catalog API.
+func TestHealthFilterOption(t *testing.T) {
+	t.Parallel()
+	var (
+		catalogCalled bool
+		catalogFilter string
+		healthCalled  bool
+		healthFilter  string
+	)
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Consul-Index", "1")
+		switch r.URL.Path {
+		case "/v1/agent/self":
+			w.Write([]byte(AgentAnswer))
+		case "/v1/catalog/services":
+			catalogCalled = true
+			catalogFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(`{"test": []}`))
+		case "/v1/health/service/test":
+			healthCalled = true
+			healthFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(ServiceTestAnswer))
+		default:
+			t.Errorf("Unhandled consul call: %s", r.URL)
+		}
+	}))
+	t.Cleanup(stub.Close)
+
+	stuburl, err := url.Parse(stub.URL)
+	require.NoError(t, err)
+
+	// No services configured: catalog path is always used, allowing us to assert
+	// that health_filter is not forwarded to the Catalog API.
+	cfg := &SDConfig{
+		Server:          stuburl.Host,
+		HealthFilter:    `Service.Tags contains "canary"`,
+		RefreshInterval: model.Duration(1 * time.Second),
+	}
+
+	d := newDiscovery(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan []*targetgroup.Group)
+	go func() {
+		d.Run(ctx, ch)
+		close(ch)
+	}()
+	checkOneTarget(t, <-ch)
+	// All handler writes happened-before the channel receive above.
+	require.True(t, catalogCalled, "Catalog endpoint should be called.")
+	require.Empty(t, catalogFilter, "Catalog should not receive the health_filter parameter.")
+	require.True(t, healthCalled, "Health endpoint should be called.")
+	require.Equal(t, `Service.Tags contains "canary"`, healthFilter, "Health endpoint should receive the health_filter parameter.")
+	cancel()
+	for range ch {
+	}
+}
+
+// TestBothFiltersOption verifies that when both filter and health_filter are configured,
+// each filter is sent exclusively to its respective API endpoint.
+func TestBothFiltersOption(t *testing.T) {
+	t.Parallel()
+	var (
+		catalogCalled bool
+		catalogFilter string
+		healthCalled  bool
+		healthFilter  string
+	)
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("X-Consul-Index", "1")
+		switch r.URL.Path {
+		case "/v1/agent/self":
+			w.Write([]byte(AgentAnswer))
+		case "/v1/catalog/services":
+			catalogCalled = true
+			catalogFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(`{"test": []}`))
+		case "/v1/health/service/test":
+			healthCalled = true
+			healthFilter = r.URL.Query().Get("filter")
+			w.Write([]byte(ServiceTestAnswer))
+		default:
+			t.Errorf("Unhandled consul call: %s", r.URL)
+		}
+	}))
+	t.Cleanup(stub.Close)
+
+	stuburl, err := url.Parse(stub.URL)
+	require.NoError(t, err)
+
+	cfg := &SDConfig{
+		Server:          stuburl.Host,
+		Services:        []string{"test"},
+		Filter:          `NodeMeta.rack_name == "2304"`,
+		HealthFilter:    `Service.Tags contains "canary"`,
+		RefreshInterval: model.Duration(1 * time.Second),
+	}
+
+	d := newDiscovery(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan []*targetgroup.Group)
+	go func() {
+		d.Run(ctx, ch)
+		close(ch)
+	}()
+	checkOneTarget(t, <-ch)
+	// All handler writes happened-before the channel receive above.
+	require.True(t, catalogCalled, "Catalog endpoint should be called when filter is set.")
+	require.Equal(t, `NodeMeta.rack_name == "2304"`, catalogFilter, "Catalog should receive only the catalog filter.")
+	require.True(t, healthCalled, "Health endpoint should be called.")
+	require.Equal(t, `Service.Tags contains "canary"`, healthFilter, "Health endpoint should receive only the health_filter.")
+	cancel()
+	for range ch {
+	}
+}
+
 func TestGetDatacenterShouldReturnError(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		handler    func(http.ResponseWriter, *http.Request)
 		errMessage string
 	}{
 		{
 			// Define a handler that will return status 500.
-			handler: func(w http.ResponseWriter, r *http.Request) {
+			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
 			errMessage: "Unexpected response code: 500 ()",
 		},
 		{
 			// Define a handler that will return incorrect response.
-			handler: func(w http.ResponseWriter, r *http.Request) {
+			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.Write([]byte(`{"Config": {"Not-Datacenter": "test-dc"}}`))
 			},
 			errMessage: "invalid value '<nil>' for Config.Datacenter",
@@ -398,24 +588,25 @@ func TestGetDatacenterShouldReturnError(t *testing.T) {
 			Token:           "fake-token",
 			RefreshInterval: model.Duration(1 * time.Second),
 		}
-		defer stub.Close()
+		t.Cleanup(stub.Close)
 		d := newDiscovery(t, config)
 
 		// Should be empty if not initialized.
-		require.Equal(t, "", d.clientDatacenter)
+		require.Empty(t, d.clientDatacenter)
 
 		err = d.getDatacenter()
 
 		// An error should be returned.
-		require.Equal(t, tc.errMessage, err.Error())
+		require.EqualError(t, err, tc.errMessage)
 		// Should still be empty.
-		require.Equal(t, "", d.clientDatacenter)
+		require.Empty(t, d.clientDatacenter)
 	}
 }
 
 func TestUnmarshalConfig(t *testing.T) {
-	unmarshal := func(d []byte) func(interface{}) error {
-		return func(o interface{}) error {
+	t.Parallel()
+	unmarshal := func(d []byte) func(any) error {
+		return func(o any) error {
 			return yaml.Unmarshal(d, o)
 		}
 	}
@@ -485,6 +676,7 @@ oauth2:
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			var config SDConfig
 			err := config.UnmarshalYAML(unmarshal([]byte(test.config)))
 			if err != nil {

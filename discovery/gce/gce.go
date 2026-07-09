@@ -1,4 +1,4 @@
-// Copyright 2015 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,12 +17,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"golang.org/x/oauth2/google"
@@ -83,7 +81,7 @@ type SDConfig struct {
 }
 
 // NewDiscovererMetrics implements discovery.Config.
-func (*SDConfig) NewDiscovererMetrics(reg prometheus.Registerer, rmi discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
+func (*SDConfig) NewDiscovererMetrics(_ prometheus.Registerer, rmi discovery.RefreshMetricsInstantiator) discovery.DiscovererMetrics {
 	return &gceMetrics{
 		refreshMetrics: rmi,
 	}
@@ -94,11 +92,11 @@ func (*SDConfig) Name() string { return "gce" }
 
 // NewDiscoverer returns a Discoverer for the Config.
 func (c *SDConfig) NewDiscoverer(opts discovery.DiscovererOptions) (discovery.Discoverer, error) {
-	return NewDiscovery(*c, opts.Logger, opts.Metrics)
+	return NewDiscovery(*c, opts)
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *SDConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultSDConfig
 	type plain SDConfig
 	err := unmarshal((*plain)(c))
@@ -114,49 +112,64 @@ func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// instancesLister lists the instances of a project/zone, paging through the
+// results and invoking f for each page.
+type instancesLister func(ctx context.Context, f func(*compute.InstanceList) error) error
+
+// newInstancesLister captures *compute.Service in a closure instead of storing
+// it on the interface-boxed Discovery struct. This keeps the binary smaller:
+// otherwise reflection keeps every Compute method live, defeating dead-code
+// elimination.
+func newInstancesLister(svc *compute.Service, project, zone, filter string) instancesLister {
+	isvc := compute.NewInstancesService(svc)
+	return func(ctx context.Context, f func(*compute.InstanceList) error) error {
+		ilc := isvc.List(project, zone)
+		if filter != "" {
+			ilc = ilc.Filter(filter)
+		}
+		return ilc.Pages(ctx, f)
+	}
+}
+
 // Discovery periodically performs GCE-SD requests. It implements
 // the Discoverer interface.
 type Discovery struct {
 	*refresh.Discovery
-	project      string
-	zone         string
-	filter       string
-	client       *http.Client
-	svc          *compute.Service
-	isvc         *compute.InstancesService
-	port         int
-	tagSeparator string
+	project       string
+	zone          string
+	listInstances instancesLister
+	port          int
+	tagSeparator  string
 }
 
 // NewDiscovery returns a new Discovery which periodically refreshes its targets.
-func NewDiscovery(conf SDConfig, logger log.Logger, metrics discovery.DiscovererMetrics) (*Discovery, error) {
-	m, ok := metrics.(*gceMetrics)
+func NewDiscovery(conf SDConfig, opts discovery.DiscovererOptions) (*Discovery, error) {
+	m, ok := opts.Metrics.(*gceMetrics)
 	if !ok {
-		return nil, fmt.Errorf("invalid discovery metrics type")
+		return nil, errors.New("invalid discovery metrics type")
 	}
 
 	d := &Discovery{
 		project:      conf.Project,
 		zone:         conf.Zone,
-		filter:       conf.Filter,
 		port:         conf.Port,
 		tagSeparator: conf.TagSeparator,
 	}
-	var err error
-	d.client, err = google.DefaultClient(context.Background(), compute.ComputeReadonlyScope)
+	client, err := google.DefaultClient(context.Background(), compute.ComputeReadonlyScope)
 	if err != nil {
 		return nil, fmt.Errorf("error setting up communication with GCE service: %w", err)
 	}
-	d.svc, err = compute.NewService(context.Background(), option.WithHTTPClient(d.client))
+	svc, err := compute.NewService(context.Background(), option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("error setting up communication with GCE service: %w", err)
 	}
-	d.isvc = compute.NewInstancesService(d.svc)
+	d.listInstances = newInstancesLister(svc, conf.Project, conf.Zone, conf.Filter)
 
 	d.Discovery = refresh.NewDiscovery(
 		refresh.Options{
-			Logger:              logger,
+			Logger:              opts.Logger,
 			Mech:                "gce",
+			SetName:             opts.SetName,
 			Interval:            time.Duration(conf.RefreshInterval),
 			RefreshF:            d.refresh,
 			MetricsInstantiator: m.refreshMetrics,
@@ -170,11 +183,7 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 		Source: fmt.Sprintf("GCE_%s_%s", d.project, d.zone),
 	}
 
-	ilc := d.isvc.List(d.project, d.zone)
-	if len(d.filter) > 0 {
-		ilc = ilc.Filter(d.filter)
-	}
-	err := ilc.Pages(ctx, func(l *compute.InstanceList) error {
+	err := d.listInstances(ctx, func(l *compute.InstanceList) error {
 		for _, inst := range l.Items {
 			if len(inst.NetworkInterfaces) == 0 {
 				continue

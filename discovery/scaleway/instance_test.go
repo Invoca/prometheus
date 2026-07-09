@@ -1,4 +1,4 @@
-// Copyright 2021 The Prometheus Authors
+// Copyright The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,7 +23,7 @@ import (
 
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 var (
@@ -60,7 +60,7 @@ api_url: %s
 	tg := tgs[0]
 	require.NotNil(t, tg)
 	require.NotNil(t, tg.Targets)
-	require.Len(t, tg.Targets, 3)
+	require.Len(t, tg.Targets, 4)
 
 	for i, lbls := range []model.LabelSet{
 		{
@@ -125,12 +125,38 @@ api_url: %s
 			"__meta_scaleway_instance_organization_id":        "20b3d507-96ac-454c-a795-bc731b46b12f",
 			"__meta_scaleway_instance_project_id":             "20b3d507-96ac-454c-a795-bc731b46b12f",
 			"__meta_scaleway_instance_public_ipv4":            "51.158.183.115",
+			"__meta_scaleway_instance_public_ipv4_addresses":  ",51.158.183.115,",
+			"__meta_scaleway_instance_public_ipv6_addresses":  ",2001:bc8:1640:1568:dc00:ff:fe21:91b,",
 			"__meta_scaleway_instance_region":                 "nl-ams",
 			"__meta_scaleway_instance_security_group_id":      "984414da-9fc2-49c0-a925-fed6266fe092",
 			"__meta_scaleway_instance_security_group_name":    "Default security group",
 			"__meta_scaleway_instance_status":                 "running",
 			"__meta_scaleway_instance_type":                   "DEV1-S",
 			"__meta_scaleway_instance_zone":                   "nl-ams-1",
+		},
+		{
+			"__address__":                                     "163.172.136.10:80",
+			"__meta_scaleway_instance_boot_type":              "local",
+			"__meta_scaleway_instance_hostname":               "multiple-ips",
+			"__meta_scaleway_instance_id":                     "658abbf4-e6c6-4239-a483-3307763cf6e0",
+			"__meta_scaleway_instance_image_arch":             "x86_64",
+			"__meta_scaleway_instance_image_id":               "f583f58c-1ea5-44ab-a1e6-2b2e7df32a86",
+			"__meta_scaleway_instance_image_name":             "Ubuntu 24.04 Noble Numbat",
+			"__meta_scaleway_instance_location_cluster_id":    "7",
+			"__meta_scaleway_instance_location_hypervisor_id": "801",
+			"__meta_scaleway_instance_location_node_id":       "95",
+			"__meta_scaleway_instance_name":                   "multiple-ips",
+			"__meta_scaleway_instance_organization_id":        "ee7bd9e1-9cbd-4724-b2f4-19e50f3cf38b",
+			"__meta_scaleway_instance_project_id":             "ee7bd9e1-9cbd-4724-b2f4-19e50f3cf38b",
+			"__meta_scaleway_instance_public_ipv4":            "163.172.136.10",
+			"__meta_scaleway_instance_public_ipv4_addresses":  ",163.172.136.10,212.47.248.223,51.15.231.134,",
+			"__meta_scaleway_instance_public_ipv6_addresses":  ",2001:bc8:710:4a69:dc00:ff:fe58:40c1,2001:bc8:710:d::,2001:bc8:710:5417::,",
+			"__meta_scaleway_instance_region":                 "fr-par",
+			"__meta_scaleway_instance_security_group_id":      "0fe819c3-274d-472a-b3f5-ddb258d2d8bb",
+			"__meta_scaleway_instance_security_group_name":    "Default security group",
+			"__meta_scaleway_instance_status":                 "running",
+			"__meta_scaleway_instance_type":                   "PLAY2-PICO",
+			"__meta_scaleway_instance_zone":                   "fr-par-1",
 		},
 	} {
 		t.Run(fmt.Sprintf("item %d", i), func(t *testing.T) {
@@ -159,6 +185,95 @@ func mockScalewayInstance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func TestScalewayInstanceRefreshIPAMPrivateNIC(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Auth-Token") != testSecretKey {
+			http.Error(w, "bad token id", http.StatusUnauthorized)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/v1/zones/fr-par-1/servers":
+			_, err := w.Write([]byte(`{
+				"servers": [
+					{
+						"id": "78d6aa69-6a5f-47bd-9f1a-3cdde6973d96",
+						"name": "ipam-only",
+						"organization": "cb334986-b054-4725-9d3a-40850fdc6015",
+						"project": "cb334986-b054-4725-9d5a-30850fdc6015",
+						"commercial_type": "DEV1-S",
+						"hostname": "ipam-only",
+						"state": "running",
+						"boot_type": "local",
+						"routed_ip_enabled": true,
+						"public_ip": null,
+						"public_ips": [],
+						"private_ip": null,
+						"private_nics": [
+							{
+								"id": "2d17a5a0-f8e5-4e7f-a029-f7c8d182af53",
+								"server_id": "78d6aa69-6a5f-47bd-9f1a-3cdde6973d96",
+								"private_network_id": "18ba4ed4-d194-4b5d-9083-447325234a71",
+								"mac_address": "02:00:00:00:31:90",
+								"state": "available",
+								"zone": "fr-par-1"
+							}
+						],
+						"zone": "fr-par-1"
+					}
+				]
+			}`))
+			require.NoError(t, err)
+		case "/ipam/v1/regions/fr-par/ips":
+			require.Equal(t, "2d17a5a0-f8e5-4e7f-a029-f7c8d182af53", r.URL.Query().Get("resource_ids"))
+			require.Equal(t, "instance_private_nic", r.URL.Query().Get("resource_types"))
+			_, err := w.Write([]byte(`{
+				"ips": [
+					{
+						"id": "b50244c4-b0b1-4cc9-a78c-26034b4967d3",
+						"address": "10.0.0.7/32",
+						"project_id": "cb334986-b054-4725-9d5a-30850fdc6015",
+						"is_ipv6": false,
+						"resource": {
+							"type": "instance_private_nic",
+							"id": "2d17a5a0-f8e5-4e7f-a029-f7c8d182af53"
+						},
+						"region": "fr-par"
+					}
+				],
+				"total_count": 1
+			}`))
+			require.NoError(t, err)
+		default:
+			http.Error(w, "bad url", http.StatusNotFound)
+		}
+	}))
+	defer mock.Close()
+
+	cfgString := fmt.Sprintf(`
+---
+role: instance
+project_id: %s
+secret_key: %s
+access_key: %s
+api_url: %s
+`, testProjectID, testSecretKey, testAccessKey, mock.URL)
+	var cfg SDConfig
+	require.NoError(t, yaml.UnmarshalStrict([]byte(cfgString), &cfg))
+
+	d, err := newRefresher(&cfg)
+	require.NoError(t, err)
+
+	tgs, err := d.refresh(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, tgs, 1)
+	require.Len(t, tgs[0].Targets, 1)
+	require.Equal(t, model.LabelValue("10.0.0.7:80"), tgs[0].Targets[0][model.AddressLabel])
+	require.Equal(t, model.LabelValue("10.0.0.7"), tgs[0].Targets[0][instancePrivateIPv4Label])
 }
 
 func TestScalewayInstanceAuthToken(t *testing.T) {
