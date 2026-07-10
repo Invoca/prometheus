@@ -1,0 +1,42 @@
+# Tests for yrate() and yincrease() using explicit start timestamps.
+#
+# The yrate family treats the beginning of a series as a zero-origin counter,
+# and treats an in-window start timestamp change as a restart even when values
+# continue increasing.
+load 1m
+    ycounter{case="no_st"}                         100 150 180 220 260
+    ycounter{case="st_inside_first_in_range"}@st   _   _   -20s _   _
+    ycounter{case="st_inside_first_in_range"}      80  120 150  180 220
+    ycounter{case="st_outside_with_pre_range"}@st  _   -30s _   _   _
+    ycounter{case="st_outside_with_pre_range"}     80  120 150  180 220
+    ycounter{case="st_mid_range_jump"}@st          _   _   _    -10s _
+    ycounter{case="st_mid_range_jump"}             80  120 150  180 220
+
+# No start timestamp and no pre-range sample: keep today's zero-origin behavior.
+eval instant at 2m30s yincrease(ycounter{case="no_st"}[3m])
+    {case="no_st"} 180
+
+eval instant at 2m30s yrate(ycounter{case="no_st"}[3m])
+    {case="no_st"} 1
+
+# The remaining cases evaluate over (1m30s, 4m30s], with the 1m sample used as
+# the pre-range predecessor.
+eval instant at 4m30s yincrease(ycounter{case="st_inside_first_in_range"}[3m])
+    {case="st_inside_first_in_range"} 220
+
+eval instant at 4m30s yrate(ycounter{case="st_inside_first_in_range"}[3m])
+    {case="st_inside_first_in_range"} 1.2222222222222223
+
+eval instant at 4m30s yincrease(ycounter{case="st_outside_with_pre_range"}[3m])
+    {case="st_outside_with_pre_range"} 100
+
+eval instant at 4m30s yrate(ycounter{case="st_outside_with_pre_range"}[3m])
+    {case="st_outside_with_pre_range"} 0.5555555555555556
+
+eval instant at 4m30s yincrease(ycounter{case="st_mid_range_jump"}[3m])
+    {case="st_mid_range_jump"} 250
+
+eval instant at 4m30s yrate(ycounter{case="st_mid_range_jump"}[3m])
+    {case="st_mid_range_jump"} 1.3888888888888888
+
+clear
