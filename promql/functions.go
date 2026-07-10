@@ -338,7 +338,10 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 // yIncrease is a utility function for yincrease/yrate/ydelta.
 // It calculates the increase of the range (allowing for counter resets if isCounter is true),
 // taking into account the sample at the end of the previous range (just before rangeStartMsec).
-// It returns the result across the range [rangeStartMsec, rangeEndMsec).
+// It returns the result across the range (rangeStartMsec, rangeEndMsec]. The left-open,
+// right-closed convention matches the Prometheus 3.x range-selector semantics
+// (see prometheus/prometheus#13213) so that a sample whose timestamp lands exactly on
+// a range boundary is attributed to the later range, never to both or neither.
 // It always extends the preceding sample's value until the next sample, including the
 // unwritten origin sample value at the start of every time series.
 //
@@ -357,8 +360,8 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 	// The points are in time order, so we can just walk the list once and remember the last values
 	// seen "before" and "in" range. If there are no values in range, we use the last value before range
 	// so that the increase is 0.
-	for i := 0; i < len(points) && points[i].T < rangeEndMsec; i++ { // Only consider points in [rangeStartMsec, rangeEndMsec).
-		if points[i].T >= rangeStartMsec {
+	for i := 0; i < len(points) && points[i].T <= rangeEndMsec; i++ { // Only consider points in (rangeStartMsec, rangeEndMsec].
+		if points[i].T > rangeStartMsec {
 			if isCounter && points[i].F < lastInRange { // Counter reset (process restart).
 				inRangeRestartSkew += lastInRange
 			}
@@ -373,8 +376,8 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 
 // rangeFromSelectors extracts points, rangeStartMsec, rangeEndMsec, and rangeSeconds
 // from the common (Matrix, MatrixSelector) arguments supplied to yincrease/yrate/ydelta.
-// The range is [rangeStartMsec, rangeEndMsec). That is, every sample in range has the property:
-// rangeStartMsec <= sample.T < rangeEndMsec.
+// The range is (rangeStartMsec, rangeEndMsec]. That is, every sample in range has the property:
+// rangeStartMsec < sample.T <= rangeEndMsec.
 func rangeFromSelectors(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) ([]FPoint, int64, int64, float64) {
 	ms := args[0].(*parser.MatrixSelector)
 	vs := ms.VectorSelector.(*parser.VectorSelector)
