@@ -588,8 +588,7 @@ eval instant at 95s yincrease(additivity_reset_early[90s])
 clear
 
 # Scenario 3: counter reset in the later window.
-# Reset between t=60s (value 29) and t=70s (value 11). Pre-reset deltas
-# +1..+7 (start 8); post-reset +1..+3 (start 11). T_0=5s, T_1=45s, T_2=95s.
+# Reset between t=60s (value 29) and t=70s (value 11). T_0=5s, T_1=45s, T_2=95s.
 load 10s
 	additivity_reset_late{job="api"}	8 9 11 14 18 23 29 11 12 14 17
 
