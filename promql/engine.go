@@ -1072,7 +1072,7 @@ func (ng *Engine) populateSeries(ctx context.Context, querier storage.Querier, s
 			hints.By, hints.Grouping = extractGroupsFromPath(path)
 			// Include an extra lookbackDelta iff this is the argument to an
 			// extended range function. Extended ranges include one extra
-			// point, this is how far back we need to look for it.
+			// point; this is how far back we need to look for it.
 			f, ok := parser.Functions[hints.Func]
 			if ok && f.ExtRange {
 				hints.Start -= durationMilliseconds(ng.lookbackDelta)
