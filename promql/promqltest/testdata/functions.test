@@ -3,7 +3,7 @@
 # /bar is an 11-point counter whose per-scrape delta grows by 1 (+1, +2, …, +10).
 # It starts at 11 — one above the largest in-range step — so the "unwritten origin"
 # offset (yrate baseline 0 → first sample 11) cannot be confused with any +k step
-# inside the series (a plain 1 2 3 … ladder hides both off-by-one and origin bugs).
+# inside the series.
 
 load 5s
   http_requests{path="/foo"}  1 1 1 2 2 2 2 2 3 3 3
