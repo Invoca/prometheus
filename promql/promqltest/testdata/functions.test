@@ -122,7 +122,7 @@ clear
 # xrate / rate family (which only consider deltas inside the range).
 #
 # Eval times are 49s/48s rather than 50s/47s so that sample timestamps
-# land strictly inside the range [start, end) rather than at its
+# land strictly inside the range (start, end] rather than at its
 # boundaries; this keeps the pre-range sample accessible to matrixIterSlice
 # and makes yincrease's "counter-at-rangeStart" value observable.
 load 5s
@@ -314,8 +314,7 @@ clear
 #
 # These functions are additive over adjacent ranges -- which is what makes them
 # composable across any partitioning of a wider range into contiguous sub-ranges.
-# Because they evaluate over a half-open range (left-inclusive on the 2.53/2.55
-# add-yrate line, right-inclusive after align-yrate-to-3x-range-boundary), two
+# Because they evaluate over a half-open range (start, end], two
 # adjacent windows partition a wider one without double-counting any sample.
 # For any three timestamps T_0 < T_1 < T_2 and range durations r_1 = T_1 - T_0,
 # r_2 = T_2 - T_1:
@@ -323,8 +322,7 @@ clear
 #   yincrease(m[r_1]) @ T_1  +  yincrease(m[r_2]) @ T_2  ==  yincrease(m[r_1 + r_2]) @ T_2
 #
 # Each scenario below picks T_0, T_1, T_2 off-cadence (no sample lands on a range
-# boundary) so the expected values are identical under both boundary conventions;
-# this block should cherry-pick cleanly across the yrate branch stack.
+# boundary).
 
 # Scenario 1: counter with incrementing deltas, no resets. T_0=5s, T_1=35s, T_2=75s.
 # Deltas +1..+9 at 10s scrape; start 10 (= max step + 1).
