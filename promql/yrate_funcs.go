@@ -33,8 +33,9 @@ import (
 // p0 and p1 ("adjacent" means p0's rangeEndMsec == p1's rangeStartMsec):
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
-func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bool) float64 {
+func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bool, startTimestamps []int64) float64 {
 	var lastBeforeRange, lastInRange, inRangeRestartSkew float64
+	var currentST int64
 
 	if !isCounter && len(points) > 0 {
 		lastBeforeRange = points[0].F // Gauges don't start at 0.
@@ -44,8 +45,13 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 	// seen "before" and "in" range. If there are no values in range, we use the last value before range
 	// so that the increase is 0.
 	for i := 0; i < len(points) && points[i].T <= rangeEndMsec; i++ { // Only consider points in (rangeStartMsec, rangeEndMsec].
+		prevST := currentST
+		if startTimestamps != nil && startTimestamps[i] != 0 {
+			currentST = startTimestamps[i]
+		}
+
 		if points[i].T > rangeStartMsec {
-			if isCounter && points[i].F < lastInRange { // Counter reset (process restart).
+			if isCounter && (points[i].F < lastInRange || isYCounterStartTimestampReset(prevST, currentST, points[i].T, rangeStartMsec)) { // Counter reset (process restart).
 				inRangeRestartSkew += lastInRange
 			}
 		} else {
@@ -55,6 +61,10 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 	}
 
 	return lastInRange - lastBeforeRange + inRangeRestartSkew
+}
+
+func isYCounterStartTimestampReset(prevST, currentST, timestamp, rangeStartMsec int64) bool {
+	return currentST != 0 && currentST != prevST && rangeStartMsec < currentST && currentST < timestamp
 }
 
 // rangeFromSelectors extracts points, rangeStartMsec, rangeEndMsec, and rangeSeconds
@@ -75,20 +85,34 @@ func rangeFromSelectors(matrixVals Matrix, args parser.Expressions, enh *EvalNod
 
 func funcYdelta(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(matrixVals, args, enh)
-	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false, nil)
 	return append(enh.Out, Sample{F: value}), nil
 }
 
 func funcYincrease(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(matrixVals, args, enh)
-	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true)
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true, yStartTimestamps(points, enh))
 	return append(enh.Out, Sample{F: value}), nil
 }
 
 func funcYrate(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	points, rangeStartMsec, rangeEndMsec, rangeSeconds := rangeFromSelectors(matrixVals, args, enh)
-	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true) / rangeSeconds
+	value := yIncrease(points, rangeStartMsec, rangeEndMsec, true, yStartTimestamps(points, enh)) / rangeSeconds
 	return append(enh.Out, Sample{F: value}), nil
+}
+
+func yStartTimestamps(points []FPoint, enh *EvalNodeHelper) []int64 {
+	if enh.StartTimestamps == nil || len(enh.StartTimestamps.Floats) != len(points) {
+		return nil
+	}
+
+	startTimestamps := enh.StartTimestamps.Floats
+	for _, startTimestamp := range startTimestamps {
+		if startTimestamp != 0 {
+			return startTimestamps
+		}
+	}
+	return nil
 }
 
 func init() {
