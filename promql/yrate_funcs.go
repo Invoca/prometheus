@@ -22,74 +22,6 @@ import (
 	"github.com/prometheus/prometheus/util/annotations"
 )
 
-// preRangeExtrapolation is a utility function for xrate/xincrease/xdelta.
-// It calculates the rate (allowing for counter resets if isCounter is true),
-// taking into account the last sample before the range start, and returns
-// the result as either per-second (if isRate is true) or overall.
-//
-// Do not confuse with extendedRate(), which implements anchored/smoothed
-// selectors in upstream Prometheus 3.x.
-func preRangeExtrapolation(matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper, isCounter, isRate bool) (Vector, annotations.Annotations) {
-	ms := args[0].(*parser.MatrixSelector)
-	vs := ms.VectorSelector.(*parser.VectorSelector)
-
-	var (
-		samples    = matrixVals[0]
-		rangeStart = enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
-		rangeEnd   = enh.Ts - durationMilliseconds(vs.Offset)
-	)
-
-	points := samples.Floats
-	if len(points) < 2 {
-		return enh.Out, nil
-	}
-	sampledRange := float64(points[len(points)-1].T - points[0].T)
-	averageInterval := sampledRange / float64(len(points)-1)
-
-	firstPoint := 0
-	// If the point before the range is too far from rangeStart, drop it.
-	if float64(rangeStart-points[0].T) > averageInterval {
-		if len(points) < 3 {
-			return enh.Out, nil
-		}
-		firstPoint = 1
-		sampledRange = float64(points[len(points)-1].T - points[firstPoint].T)
-		averageInterval = sampledRange / float64(len(points)-2)
-	}
-
-	var (
-		counterCorrection float64
-		lastValue         float64
-	)
-	if isCounter {
-		for i := firstPoint; i < len(points); i++ {
-			sample := points[i]
-			if sample.F < lastValue {
-				counterCorrection += lastValue
-			}
-			lastValue = sample.F
-		}
-	}
-	resultValue := points[len(points)-1].F - points[firstPoint].F + counterCorrection
-
-	// Duration between last sample and boundary of range.
-	durationToEnd := float64(rangeEnd - points[len(points)-1].T)
-
-	// If the points cover the whole range (i.e. they start just before the
-	// range start and end just before the range end) adjust the value from
-	// the sampled range to the requested range.
-	if points[firstPoint].T <= rangeStart && durationToEnd < averageInterval {
-		adjustToRange := float64(durationMilliseconds(ms.Range))
-		resultValue *= (adjustToRange / sampledRange)
-	}
-
-	if isRate {
-		resultValue /= ms.Range.Seconds()
-	}
-
-	return append(enh.Out, Sample{F: resultValue}), nil
-}
-
 // yIncrease is a utility function for yincrease/yrate/ydelta.
 // It calculates the increase of the range (allowing for counter resets if isCounter is true),
 // taking into account the sample at the end of the previous range (just before rangeStartMsec).
@@ -145,18 +77,6 @@ func rangeFromSelectors(matrixVals Matrix, args parser.Expressions, enh *EvalNod
 	return points, rangeStartMsec, rangeEndMsec, ms.Range.Seconds()
 }
 
-func funcXdelta(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
-	return preRangeExtrapolation(matrixVals, args, enh, false, false)
-}
-
-func funcXrate(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
-	return preRangeExtrapolation(matrixVals, args, enh, true, true)
-}
-
-func funcXincrease(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
-	return preRangeExtrapolation(matrixVals, args, enh, true, false)
-}
-
 func funcYdelta(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *EvalNodeHelper) (Vector, annotations.Annotations) {
 	points, rangeStartMsec, rangeEndMsec, _ := rangeFromSelectors(matrixVals, args, enh)
 	value := yIncrease(points, rangeStartMsec, rangeEndMsec, false)
@@ -176,9 +96,6 @@ func funcYrate(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *Eval
 }
 
 func init() {
-	FunctionCalls["xdelta"] = funcXdelta
-	FunctionCalls["xincrease"] = funcXincrease
-	FunctionCalls["xrate"] = funcXrate
 	FunctionCalls["ydelta"] = funcYdelta
 	FunctionCalls["yincrease"] = funcYincrease
 	FunctionCalls["yrate"] = funcYrate
