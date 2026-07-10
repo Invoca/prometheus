@@ -1935,63 +1935,39 @@ func init() {
 		fmt.Println("Successfully replaced rate & friends with xrate & friends (and removed xrate & friends function keys).")
 
 	case "x", "X":
-		preserveOriginalRateFuncs()
-		repointParserFunctions("delta", "xdelta")
-		repointParserFunctions("increase", "xincrease")
-		repointParserFunctions("rate", "xrate")
-		repointFunction("delta", "xdelta")
-		repointFunction("increase", "xincrease")
-		repointFunction("rate", "xrate")
+		replaceStandardRateFuncs("x")
 		fmt.Println("Successfully replaced rate/increase/delta with xrate/xincrease/xdelta; originals available as _rate/_increase/_delta; x* names also available.")
 
 	case "2", "y", "Y":
-		preserveOriginalRateFuncs()
-		repointParserFunctions("delta", "ydelta")
-		repointParserFunctions("increase", "yincrease")
-		repointParserFunctions("rate", "yrate")
-		repointFunction("delta", "ydelta")
-		repointFunction("increase", "yincrease")
-		repointFunction("rate", "yrate")
+		replaceStandardRateFuncs("y")
 		fmt.Println("Successfully replaced rate/increase/delta with yrate/yincrease/ydelta; originals available as _rate/_increase/_delta; y* and x* names also available.")
 	}
 }
 
-// preserveOriginalRateFuncs copies the upstream rate/increase/delta parser and
-// evaluator entries to _rate/_increase/_delta before repointing the standard
-// names at the xrate or yrate family.
-func preserveOriginalRateFuncs() {
-	copyParserFunction("delta", "_delta")
-	copyParserFunction("increase", "_increase")
-	copyParserFunction("rate", "_rate")
-	copyFunctionCall("delta", "_delta")
-	copyFunctionCall("increase", "_increase")
-	copyFunctionCall("rate", "_rate")
+// replaceStandardRateFuncs preserves upstream delta/increase/rate as
+// _delta/_increase/_rate and repoints the standard names at the x* or y* family
+// (per replacementPrefix).
+func replaceStandardRateFuncs(replacementPrefix string) {
+	for _, name := range []string{"delta", "increase", "rate"} {
+		setParserFunctionFrom("_"+name, name)
+		setFunctionCallFrom("_"+name, name)
+		replacement := replacementPrefix + name
+		setParserFunctionFrom(name, replacement)
+		setFunctionCallFrom(name, replacement)
+	}
 }
 
-func copyParserFunction(fromName, toName string) {
-	result := *parser.Functions[fromName]
-	result.Name = toName
-	parser.Functions[toName] = &result
+// setParserFunctionFrom registers targetName as a copy of sourceName's parser
+// metadata, with Name set to targetName.
+func setParserFunctionFrom(targetName, sourceName string) {
+	result := *parser.Functions[sourceName]
+	result.Name = targetName
+	parser.Functions[targetName] = &result
 }
 
-func copyFunctionCall(fromName, toName string) {
-	FunctionCalls[toName] = FunctionCalls[fromName]
-}
-
-// repointParserFunctions makes name resolve to newName's implementation while
-// keeping name as the displayed/parser function name. A copy is made so the
-// newName entry is not mutated.
-func repointParserFunctions(name, newName string) {
-	result := *parser.Functions[newName]
-	result.Name = name
-	parser.Functions[name] = &result
-}
-
-// repointFunction makes the FunctionCalls entry for name dispatch to the
-// implementation currently registered under newName. The newName entry
-// is left in place.
-func repointFunction(name, newName string) {
-	FunctionCalls[name] = FunctionCalls[newName]
+// setFunctionCallFrom makes targetName dispatch to sourceName's implementation.
+func setFunctionCallFrom(targetName, sourceName string) {
+	FunctionCalls[targetName] = FunctionCalls[sourceName]
 }
 
 type vectorByValueHeap Vector
