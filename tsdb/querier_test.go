@@ -3022,7 +3022,7 @@ func TestQuerierIndexQueriesRace(t *testing.T) {
 				q, err := db.Querier(math.MinInt64, math.MaxInt64)
 				require.NoError(t, err)
 
-				values, _, err := q.LabelValues(ctx, "seq", c.matchers...)
+				values, _, err := q.LabelValues(ctx, "seq", nil, c.matchers...)
 				require.NoError(t, err)
 				require.Emptyf(t, values, `label values for label "seq" should be empty`)
 
@@ -3169,12 +3169,11 @@ func BenchmarkQueries(b *testing.B) {
 
 					qHead, err := NewBlockQuerier(NewRangeHead(head, 1, nSamples), 1, nSamples)
 					require.NoError(b, err)
-					qOOOHead, err := NewBlockQuerier(NewOOORangeHead(head, 1, nSamples, 0), 1, nSamples)
-					require.NoError(b, err)
+					isoState := head.oooIso.TrackReadAfter(0)
+					qOOOHead := NewHeadAndOOOQuerier(1, 1, nSamples, head, isoState, qHead)
 
 					queryTypes = append(queryTypes, qt{
-						fmt.Sprintf("_Head_oooPercent:%d", oooPercentage),
-						storage.NewMergeQuerier([]storage.Querier{qHead, qOOOHead}, nil, storage.ChainedSeriesMerge),
+						fmt.Sprintf("_Head_oooPercent:%d", oooPercentage), qOOOHead,
 					})
 				}
 
