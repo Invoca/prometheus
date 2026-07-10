@@ -118,7 +118,7 @@ clear
 # Tests for increase()/xincrease()/yincrease()/xrate()/yrate().
 #
 # The counters start at 1000/2000 so yincrease/yrate (which treat every
-# pre-origin value as 0) return wildly different results from the
+# pre-origin value as 0) return significantly different results from the
 # xrate / rate family (which only consider deltas inside the range).
 #
 # Eval times are 49s/48s rather than 50s/47s so that sample timestamps
