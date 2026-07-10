@@ -325,11 +325,11 @@ func extendedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHel
 	// the sampled range to the requested range.
 	if points[firstPoint].T <= rangeStart && durationToEnd < averageInterval {
 		adjustToRange := float64(durationMilliseconds(ms.Range))
-		resultValue = resultValue * (adjustToRange / sampledRange)
+		resultValue *= (adjustToRange / sampledRange)
 	}
 
 	if isRate {
-		resultValue = resultValue / ms.Range.Seconds()
+		resultValue /= ms.Range.Seconds()
 	}
 
 	return append(enh.Out, Sample{F: resultValue}), nil

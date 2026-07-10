@@ -971,7 +971,7 @@ func (ng *Engine) populateSeries(ctx context.Context, querier storage.Querier, s
 			// point, this is how far back we need to look for it.
 			f, ok := parser.Functions[hints.Func]
 			if ok && f.ExtRange {
-				hints.Start = hints.Start - durationMilliseconds(ng.lookbackDelta)
+				hints.Start -= durationMilliseconds(ng.lookbackDelta)
 			}
 
 			n.UnexpandedSeriesSet = querier.Select(ctx, false, hints, n.LabelMatchers...)
