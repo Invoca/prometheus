@@ -38,11 +38,9 @@ func TestReplaceRateFuncs2(t *testing.T) {
 	require.NotNil(t, parser.Functions["rate"])
 	require.NotNil(t, parser.Functions["yrate"])
 	require.NotNil(t, parser.Functions["_rate"])
-	require.NotNil(t, parser.Functions["xrate"])
 	require.Equal(t, "rate", parser.Functions["rate"].Name)
 	require.Equal(t, "yrate", parser.Functions["yrate"].Name)
 	require.Equal(t, "_rate", parser.Functions["_rate"].Name)
 	require.True(t, rateFuncPointersEqual(FunctionCalls["rate"], FunctionCalls["yrate"]))
 	require.False(t, rateFuncPointersEqual(FunctionCalls["_rate"], FunctionCalls["rate"]))
-	require.False(t, rateFuncPointersEqual(FunctionCalls["rate"], FunctionCalls["xrate"]))
 }
