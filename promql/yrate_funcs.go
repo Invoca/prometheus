@@ -25,8 +25,9 @@ import (
 // right-closed convention matches the Prometheus 3.x range-selector semantics
 // (see prometheus/prometheus#13213) so that a sample whose timestamp lands exactly on
 // a range boundary is attributed to the later range, never to both or neither.
-// It always extends the preceding sample's value until the next sample, including the
-// unwritten origin sample value at the start of every time series.
+// It always extends the preceding sample's value until the next sample. For
+// counters without start timestamps it also includes the unwritten origin
+// sample value at the start of every time series.
 //
 // It is additive over adjacent periods, and therefore composable across any
 // partitioning of a wider range into contiguous sub-ranges. For adjacent periods
@@ -34,37 +35,65 @@ import (
 //
 //	yIncrease(p0) + yIncrease(p1) == yIncrease(p0 + p1)
 func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bool, startTimestamps []int64) float64 {
-	var lastBeforeRange, lastInRange, inRangeRestartSkew float64
-	var currentST int64
-
-	if !isCounter && len(points) > 0 {
-		lastBeforeRange = points[0].F // Gauges don't start at 0.
+	if len(points) == 0 {
+		return 0
 	}
 
-	// The points are in time order, so we can just walk the list once and remember the last values
-	// seen "before" and "in" range. If there are no values in range, we use the last value before range
-	// so that the increase is 0.
+	var lastBeforeRange float64
+	if isCounter && startTimestamps == nil {
+		// Counter without start timestamps:  This implies an unwritten 0 origin at
+		// the start of the series, so the first sample's value counts as an increase.
+		lastBeforeRange = 0
+	} else {
+		// Counter with start timestamps, or Gauge:  The first sample's value does not
+		// count as an increase. We achieve this by setting lastBeforeRange to the first sample's value.
+		lastBeforeRange = points[0].F
+	}
+
+	// The points are in time order, so we can just walk the list once and remember the baseline value
+	// seen "before" the range and the last value seen "in" range. If there are no values in range, we use the
+	// baseline value before range so that the increase is 0.
+	var lastInRange, inRangeResetIncreases float64
+	var currentST int64
+	var foundInRangeSample bool
 	for i := 0; i < len(points) && points[i].T <= rangeEndMsec; i++ { // Only consider points in (rangeStartMsec, rangeEndMsec].
 		prevST := currentST
-		if startTimestamps != nil && startTimestamps[i] != 0 {
+		if i < len(startTimestamps) && startTimestamps[i] != 0 {
 			currentST = startTimestamps[i]
 		}
 
 		if points[i].T > rangeStartMsec {
-			if isCounter && (points[i].F < lastInRange || isYCounterStartTimestampReset(prevST, currentST, points[i].T, rangeStartMsec)) { // Counter reset (process restart).
-				inRangeRestartSkew += lastInRange
+			// In range.
+			if isCounter && isYCounterReset(startTimestamps, prevST, currentST, points[i].T, rangeStartMsec, points[i].F, lastInRange) {
+				// Counter reset: accumulate as if 0 had come before this sample.
+				inRangeResetIncreases += lastInRange
+
+				if !foundInRangeSample {
+					// This reset was *also* the first in-range sample. Since we just counted
+					// the increase above, we assign lastBeforeRange equal so there's no
+					// double-counted increase.
+					lastBeforeRange = lastInRange
+				}
 			}
+			foundInRangeSample = true
 		} else {
+			// Out of range.
 			lastBeforeRange = points[i].F
 		}
 		lastInRange = points[i].F
 	}
 
-	return lastInRange - lastBeforeRange + inRangeRestartSkew
+	return lastInRange - lastBeforeRange + inRangeResetIncreases
 }
 
-func isYCounterStartTimestampReset(prevST, currentST, timestamp, rangeStartMsec int64) bool {
-	return currentST != 0 && currentST != prevST && rangeStartMsec < currentST && currentST < timestamp
+// isYCounterReset reports whether sample (timestamp, value) is a counter reset
+// relative to the previous sample. A value drop always counts. When
+// startTimestamps is non-nil, an in-window change of currentST also counts.
+func isYCounterReset(startTimestamps []int64, prevST, currentST, timestamp, rangeStartMsec int64, value, lastInRange float64) bool {
+	return value < lastInRange || // Counter went backwards.
+		(startTimestamps != nil && // We have start timestamps.
+			currentST != 0 && currentST != prevST && // currentST changed (and is "usable" == non-zero).
+			rangeStartMsec < currentST && currentST < timestamp) // In-window.
 }
 
 // rangeFromSelectors extracts points, rangeStartMsec, rangeEndMsec, and rangeSeconds
@@ -102,14 +131,12 @@ func funcYrate(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *Eval
 }
 
 func yStartTimestamps(points []FPoint, enh *EvalNodeHelper) []int64 {
-	if enh.StartTimestamps == nil || len(enh.StartTimestamps.Floats) != len(points) {
-		return nil
-	}
-
-	startTimestamps := enh.StartTimestamps.Floats
-	for _, startTimestamp := range startTimestamps {
-		if startTimestamp != 0 {
-			return startTimestamps
+	if enh.StartTimestamps != nil && len(enh.StartTimestamps.Floats) == len(points) {
+		startTimestamps := enh.StartTimestamps.Floats
+		for _, startTimestamp := range startTimestamps {
+			if startTimestamp != 0 {
+				return startTimestamps
+			}
 		}
 	}
 	return nil
