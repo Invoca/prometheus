@@ -1,4 +1,4 @@
-# Tests for yrate() and yincrease() using explicit start timestamps.
+# End-to-end promqltest coverage of yrate/yincrease with @st series load through engine evaluation.
 #
 # When Start Timestamps (STs) are absent, the yrate family infers the zero-origin at the beginning of a counter series so as not to miss starting counter increases.
 # When STs are present, it infers the zero-origin by looking for a preceding Start Timestamp instead.

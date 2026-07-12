@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Unit tests for yincrease/yrate function edge cases invoked directly without the PromQL engine.
+
 package promql
 
 import (
