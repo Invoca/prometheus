@@ -2,7 +2,7 @@
 #
 # When Start Timestamps (STs) are absent, the yrate family infers the zero-origin at the beginning of a counter series so as not to miss starting counter increases.
 # When STs are present, it infers the zero-origin by looking for a preceding Start Timestamp instead.
-# In addition, it infers counter resets if the value drops, or after an in-window ST regardless of whether the value dropped or not.
+# In addition, it infers counter resets if the value drops, or after an ST regardless of whether the value dropped or not.
 
 # Values use a triangular counter (deltas +1, +2, +3, +4) starting at
 # max_step+1 so an unwritten-origin offset cannot be confused with any in-range
