@@ -51,8 +51,7 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 	}
 
 	// The points are in time order, so we can just walk the list once and remember the baseline value
-	// seen "before" the range and the last value seen "in" range. If there are no values in range, we use the
-	// baseline value before range so that the increase is 0.
+	// seen "before" the range and the last value seen "in" range.
 	var lastInRange, inRangeResetIncreases float64
 	var currentST int64
 	var foundInRangeSample bool
