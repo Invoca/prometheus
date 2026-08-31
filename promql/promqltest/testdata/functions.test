@@ -1,3 +1,381 @@
+# Comparison of rate vs xrate vs yrate.
+#
+# /bar is an 11-point counter whose per-scrape delta grows by 1 (+1, +2, …, +10).
+# It starts at 11 — one above the largest in-range step — so the "unwritten origin"
+# offset (yrate baseline 0 → first sample 11) cannot be confused with any +k step
+# inside the series.
+
+load 5s
+  http_requests{path="/foo"}  1 1 1 2 2 2 2 2 3 3 3
+  http_requests{path="/bar"}  11 12 14 17 21 26 32 39 47 56 66
+
+
+#
+# Timeseries starts inside range, (presumably) goes on after range end.
+#
+
+# 1. Reference eval, aligned with collection.
+# Upstream rate() expectations vary by Prometheus major version; xrate/yrate
+# behaviour is asserted below.
+
+eval instant at 25s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.3
+
+eval instant at 25s yrate(http_requests[50s])
+  {path="/foo"} 0.04
+  {path="/bar"} 0.52
+
+# 2. Eval 1 second earlier compared to (1).
+#    * path="/foo" rate should be same or fractionally higher ("shorter" sample, same actual increase);
+#    * path="/bar" rate should be same or fractionally lower (80% the increase, 80/96% range covered by sample).
+# XXX Seeing ~20% jump for path="/foo"
+eval instant at 24s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.2
+
+eval instant at 24s yrate(http_requests[50s])
+  {path="/foo"} 0.04
+  {path="/bar"} 0.42
+
+# 3. Eval 1 second later compared to (1).
+#    * path="/foo" rate should be same or fractionally lower ("longer" sample, same actual increase).
+#    * path="/bar" rate should be same or fractionally lower ("longer" sample, same actual increase).
+# XXX Higher instead of lower for both.
+eval instant at 26s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.3
+
+eval instant at 26s yrate(http_requests[50s])
+  {path="/foo"} 0.04
+  {path="/bar"} 0.52
+
+
+#
+# Timeseries starts before range, ends within range.
+#
+
+# 4. Reference eval, aligned with collection.
+eval instant at 75s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.8
+
+eval instant at 75s yrate(http_requests[50s])
+  {path="/foo"} 0.02
+  {path="/bar"} 0.8
+
+# 5. Eval 1s earlier compared to (4).
+#    * path="/foo" rate should be same or fractionally lower ("longer" sample, same actual increase).
+#    * path="/bar" rate should be same or fractionally lower ("longer" sample, same actual increase).
+# XXX Higher instead of lower for both.
+eval instant at 74s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.9
+
+eval instant at 74s yrate(http_requests[50s])
+  {path="/foo"} 0.02
+  {path="/bar"} 0.9
+
+# 6. Eval 1s later compared to (4). Rate/increase (should be) fractionally smaller.
+#    * path="/foo" rate should be same or fractionally higher ("shorter" sample, same actual increase);
+#    * path="/bar" rate should be same or fractionally lower (80% the increase, 80/96% range covered by sample).
+# XXX Seeing ~20% jump for path="/foo", decrease instead of increase for path="/bar".
+eval instant at 76s xrate(http_requests[50s])
+  {path="/foo"} .02
+  {path="/bar"} 0.8
+
+eval instant at 76s yrate(http_requests[50s])
+  {path="/foo"} 0.02
+  {path="/bar"} 0.8
+
+#
+# Evaluation of 10 second rate every 10 seconds, not aligned with collection.
+#
+
+eval instant at 9s xrate(http_requests[10s])
+  {path="/foo"} 0
+  {path="/bar"} 0.1
+
+eval instant at 19s xrate(http_requests[10s])
+  {path="/foo"} 0.1
+  {path="/bar"} 0.5
+
+eval instant at 29s xrate(http_requests[10s])
+  {path="/foo"} 0
+  {path="/bar"} 0.9
+
+eval instant at 39s xrate(http_requests[10s])
+  {path="/foo"} 0
+  {path="/bar"} 1.3
+
+# XXX Sees the increase in path="/foo" between timestamps 35 and 40.
+eval instant at 49s xrate(http_requests[10s])
+  {path="/foo"} .1
+  {path="/bar"} 1.7
+
+clear
+
+# Tests for increase()/xincrease()/yincrease()/xrate()/yrate().
+#
+# The counters start at 1000/2000 so yincrease/yrate (which treat every
+# pre-origin value as 0) return significantly different results from the
+# xrate / rate family (which only consider deltas inside the range).
+#
+# Eval times are 49s/48s rather than 50s/47s so that sample timestamps
+# land strictly inside the range (start, end] rather than at its
+# boundaries; this keeps the pre-range sample accessible to matrixIterSlice
+# and makes yincrease's "counter-at-rangeStart" value observable.
+load 5s
+	http_requests{path="/foo"}	1000+10x10
+	http_requests{path="/bar"}	2000+10x5 5+10x4
+
+# Tests for increase() (standard Prometheus, for reference).
+eval instant at 49s increase(http_requests[50s])
+	{path="/foo"} 100
+	{path="/bar"} 94.44444444444444
+
+eval instant at 49s increase(http_requests[100s])
+	{path="/foo"} 103
+	{path="/bar"} 97.27777777777777
+
+# Tests for xincrease().
+eval instant at 49s xincrease(http_requests[50s])
+	{path="/foo"} 90
+	{path="/bar"} 85
+
+eval instant at 49s xincrease(http_requests[100s])
+	{path="/foo"} 90
+	{path="/bar"} 85
+
+eval instant at 49s xincrease(http_requests[5s])
+	{path="/foo"} 10
+	{path="/bar"} 10
+
+eval instant at 49s xincrease(http_requests[3s])
+
+eval instant at 48s xincrease(http_requests[3s])
+
+# Tests for yincrease(). yrate always compares to a pre-origin of 0,
+# so yincrease sees the full 1000/2000 offset in the first range.
+eval instant at 49s yincrease(http_requests[50s])
+	{path="/foo"} 1090
+	{path="/bar"} 2085
+
+eval instant at 49s yincrease(http_requests[100s])
+	{path="/foo"} 1090
+	{path="/bar"} 2085
+
+eval instant at 49s yincrease(http_requests[5s])
+	{path="/foo"} 10
+	{path="/bar"} 10
+
+eval instant at 49s yincrease(http_requests[3s])
+	{path="/foo"} 0
+	{path="/bar"} 0
+
+# Tests for xrate().
+eval instant at 49s xrate(http_requests[50s])
+	{path="/foo"} 1.8
+	{path="/bar"} 1.7
+
+eval instant at 49s xrate(http_requests[100s])
+	{path="/foo"} 0.9
+	{path="/bar"} 0.85
+
+eval instant at 49s xrate(http_requests[5s])
+	{path="/foo"} 2
+	{path="/bar"} 2
+
+eval instant at 49s xrate(http_requests[3s])
+
+eval instant at 48s xrate(http_requests[3s])
+
+# Tests for yrate().
+eval instant at 49s yrate(http_requests[50s])
+	{path="/foo"} 21.8
+	{path="/bar"} 41.7
+
+eval instant at 49s yrate(http_requests[100s])
+	{path="/foo"} 10.9
+	{path="/bar"} 20.85
+
+eval instant at 49s yrate(http_requests[5s])
+	{path="/foo"} 2
+	{path="/bar"} 2
+
+eval instant at 49s yrate(http_requests[3s])
+	{path="/foo"} 0
+	{path="/bar"} 0
+
+clear
+
+# Test for increase()/xincrease()/yincrease() with counter reset.
+# When the counter is reset, it always starts at 0.
+# So the sequence 1006 4 (decreasing counter = reset) is interpreted the
+# same as 1006 0 1 2 3 4. Prometheus assumes it missed the intermediate
+# values 0, 1, 2, 3.
+load 5m
+	http_requests{path="/foo"}	1000 1001 1003 1006 4 9 16
+
+eval instant at 29m increase(http_requests[30m])
+	{path="/foo"} 18
+
+eval instant at 29m xincrease(http_requests[30m])
+	{path="/foo"} 15
+
+eval instant at 29m yincrease(http_requests[30m])
+	{path="/foo"} 1015
+
+# Test counter reset inside the range, not spanning the range boundary.
+eval instant at 19m xincrease(http_requests[5m])
+	{path="/foo"} 3
+
+eval instant at 19m yincrease(http_requests[5m])
+	{path="/foo"} 3
+
+eval instant at 19m xincrease(http_requests[10m])
+	{path="/foo"} 5
+
+eval instant at 19m yincrease(http_requests[10m])
+	{path="/foo"} 5
+
+eval instant at 24m xincrease(http_requests[5m])
+	{path="/foo"} 4
+
+eval instant at 24m yincrease(http_requests[5m])
+	{path="/foo"} 4
+
+eval instant at 24m xincrease(http_requests[10m])
+	{path="/foo"} 7
+
+eval instant at 24m yincrease(http_requests[10m])
+	{path="/foo"} 7
+
+clear
+
+# Tests for delta()/xdelta().
+load 5m
+	http_requests{path="/foo"}	0 50 300 150 200
+	http_requests{path="/bar"}	200 150 300 50 0
+
+eval instant at 20m delta(http_requests[20m])
+	{path="/foo"} 200
+	{path="/bar"} -200
+
+eval instant at 20m xdelta(http_requests[20m])
+	{path="/foo"} 200
+	{path="/bar"} -200
+
+eval instant at 20m xdelta(http_requests[19m])
+	{path="/foo"} 190
+	{path="/bar"} -190
+
+eval instant at 20m xdelta(http_requests[1m])
+	{path="/foo"} 10
+	{path="/bar"} -10
+
+clear
+
+# Tests for ydelta().
+# ydelta extends the value of the sample preceding rangeStart across
+# every gap, so the answer is simply last-in-range minus
+# last-before-range (no counter-reset correction: ydelta does not treat
+# the series as a counter).
+#
+# /foo uses the same incrementing-delta counter convention as the rate
+# showcase (deltas +1..+6, start 7 = max step + 1).
+load 5m
+	http_requests{path="/foo"}	 7 8 10 13 17 22 28
+	http_requests{path="/bar"}	11 9 7 5 3 1 0
+
+eval instant at 29m delta(http_requests[30m])
+	{path="/foo"} 18
+	{path="/bar"} -12
+
+eval instant at 29m xdelta(http_requests[30m])
+	{path="/foo"} 15
+	{path="/bar"} -10
+
+eval instant at 29m ydelta(http_requests[30m])
+	{path="/foo"} 15
+	{path="/bar"} -10
+
+eval instant at 29m ydelta(http_requests[25m])
+	{path="/foo"} 15
+	{path="/bar"} -10
+
+eval instant at 29m ydelta(http_requests[5m])
+	{path="/foo"} 5
+	{path="/bar"} -2
+
+clear
+
+# Additivity invariant for the yrate/yincrease/ydelta family.
+#
+# These functions are additive over adjacent ranges -- which is what makes them
+# composable across any partitioning of a wider range into contiguous sub-ranges.
+# Because they evaluate over a half-open range (start, end], two
+# adjacent windows partition a wider one without double-counting any sample.
+# For any three timestamps T_0 < T_1 < T_2 and range durations r_1 = T_1 - T_0,
+# r_2 = T_2 - T_1:
+#
+#   yincrease(m[r_1]) @ T_1  +  yincrease(m[r_2]) @ T_2  ==  yincrease(m[r_1 + r_2]) @ T_2
+#
+# Each scenario below picks T_0, T_1, T_2 off-cadence (no sample lands on a range
+# boundary).
+
+# Scenario 1: counter with incrementing deltas, no resets. T_0=5s, T_1=35s, T_2=75s.
+# Deltas +1..+9 at 10s scrape; start 10 (= max step + 1).
+load 10s
+	additivity_uniform{job="api"}	10 11 13 16 20 25 31 38 46 55
+
+eval instant at 35s yincrease(additivity_uniform[30s])
+	{job="api"} 6
+
+eval instant at 75s yincrease(additivity_uniform[40s])
+	{job="api"} 22
+
+eval instant at 75s yincrease(additivity_uniform[70s])
+	{job="api"} 28
+# 6 + 22 == 28
+
+clear
+
+# Scenario 2: counter reset in the earlier window.
+# Reset between t=40s (value 21) and t=50s (value 11). Deltas +1..+4 on
+# each side; start 11 (= max step + 1). T_0=5s, T_1=65s, T_2=95s.
+load 10s
+	additivity_reset_early{job="api"}	11 12 14 17 21 11 12 14 17 21
+
+eval instant at 65s yincrease(additivity_reset_early[60s])
+	{job="api"} 22
+
+eval instant at 95s yincrease(additivity_reset_early[30s])
+	{job="api"} 9
+
+eval instant at 95s yincrease(additivity_reset_early[90s])
+	{job="api"} 31
+# 22 + 9 == 31
+
+clear
+
+# Scenario 3: counter reset in the later window.
+# Reset between t=60s (value 29) and t=70s (value 11). T_0=5s, T_1=45s, T_2=95s.
+load 10s
+	additivity_reset_late{job="api"}	8 9 11 14 18 23 29 11 12 14 17
+
+eval instant at 45s yincrease(additivity_reset_late[40s])
+	{job="api"} 10
+
+eval instant at 95s yincrease(additivity_reset_late[50s])
+	{job="api"} 25
+
+eval instant at 95s yincrease(additivity_reset_late[90s])
+	{job="api"} 35
+# 10 + 25 == 35
+
+clear
+
 # Testdata for resets() and changes().
 load 5m
 	http_requests{path="/foo"}	1 2 3 0 1 0 0 1 2 0
