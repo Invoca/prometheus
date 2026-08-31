@@ -1,0 +1,49 @@
+# End-to-end promqltest coverage of yrate/yincrease with @st series load through engine evaluation.
+#
+# When Start Timestamps (STs) are absent, the yrate family infers the zero-origin at the beginning of a counter series so as not to miss starting counter increases.
+# When STs are present, it infers the zero-origin by looking for a preceding Start Timestamp instead.
+# In addition, it infers counter resets if the value drops, or after an ST regardless of whether the value dropped or not.
+
+# Values use a triangular counter (deltas +1, +2, +3, +4) starting at
+# max_step+1 so an unwritten-origin offset cannot be confused with any in-range
+# step.
+load 1m
+    ycounter{case="no_st"}                         5 6 8 11 15
+    ycounter{case="st_inside_first_in_range"}@st   _ _ -20s _  _
+    ycounter{case="st_inside_first_in_range"}      5 6 8  11 15
+    ycounter{case="st_outside_with_pre_range"}@st  _ -30s _  _  _
+    ycounter{case="st_outside_with_pre_range"}     5 6 8  11 15
+    ycounter{case="st_mid_range_jump"}@st          _ _ _    -10s _
+    ycounter{case="st_mid_range_jump"}             5 6 8  11 15
+
+# No start timestamp and no pre-range sample: zero-origin applies.
+# Eval at 2m30s over [3m] => (-30s, 2m30s]; samples 5,6,8 => increase 8.
+eval instant at 2m30s yincrease(ycounter{case="no_st"}[3m])
+    {case="no_st"} 8
+
+eval instant at 2m30s yrate(ycounter{case="no_st"}[3m])
+    {case="no_st"} 0.044444444444444446
+
+# The remaining cases evaluate over (1m30s, 4m30s], with the 1m sample (value 6)
+# used as the pre-range predecessor. In-range samples: 8, 11, 15.
+eval instant at 4m30s yincrease(ycounter{case="st_inside_first_in_range"}[3m])
+    {case="st_inside_first_in_range"} 15
+
+eval instant at 4m30s yrate(ycounter{case="st_inside_first_in_range"}[3m])
+    {case="st_inside_first_in_range"} 0.08333333333333333
+
+# Pre-range baseline 6, last in-range 15, no ST reset => 15 - 6 = 9.
+eval instant at 4m30s yincrease(ycounter{case="st_outside_with_pre_range"}[3m])
+    {case="st_outside_with_pre_range"} 9
+
+eval instant at 4m30s yrate(ycounter{case="st_outside_with_pre_range"}[3m])
+    {case="st_outside_with_pre_range"} 0.05
+
+# Mid-range ST jump at t=3m: reset adds prior in-range value 8 => 15 - 6 + 8 = 17.
+eval instant at 4m30s yincrease(ycounter{case="st_mid_range_jump"}[3m])
+    {case="st_mid_range_jump"} 17
+
+eval instant at 4m30s yrate(ycounter{case="st_mid_range_jump"}[3m])
+    {case="st_mid_range_jump"} 0.09444444444444444
+
+clear
