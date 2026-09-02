@@ -1,6 +1,9 @@
-FROM golang:1.26 AS compile
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
-    && apt-get install -yq nodejs build-essential
+FROM golang:1.25 AS compile
+ARG NODE_VERSION=22.22.3
+RUN curl -fsSL https://deb.nodesource.com/setup_$(echo $NODE_VERSION | cut -d. -f1).x | bash - \
+    && apt-get install -yq nodejs build-essential \
+    && corepack enable \
+    && corepack prepare pnpm@11 --activate
 WORKDIR /build
 COPY . .
 RUN make build

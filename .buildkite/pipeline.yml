@@ -10,11 +10,11 @@ steps:
       queue: buildkit-daemonless
       buildkit: true
       daemonless: true
-    command: >
-      buildctl-daemonless build
-        --output type=image,"name=$IMAGE_NAME:$BUILDKITE_COMMIT,$IMAGE_NAME:$BUILDKITE_BRANCH_DOCKER_SAFE",push=true
-        --progress plain
-        --frontend dockerfile.v0
-        --opt filename=Dockerfile.invoca
-        --local context=.
-        --local dockerfile=.
+    commands:
+      - >
+        buildctl-daemonless build --output type=image,\"name=\$IMAGE_NAME:$BUILDKITE_COMMIT,\$IMAGE_NAME:\$BUILDKITE_BRANCH_DOCKER_SAFE\",push=true \
+                                  --progress plain \
+                                  --frontend dockerfile.v0 \
+                                  --opt filename=Dockerfile.invoca \
+                                  --local context=. \
+                                  --local dockerfile=.
