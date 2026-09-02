@@ -20,7 +20,9 @@ import (
 	"github.com/prometheus/prometheus/util/annotations"
 )
 
-// TEMPORARY: debug logger for start-timestamp verification. Remove after integration testing.
+// TODO(sprice): TEMPORARY debug logger for start-timestamp verification.
+// Revert this logger and its call sites once ST integration testing on
+// red.prodref.us-east-1 has validated yrate/yincrease start-timestamp handling.
 var yrateSTLogger = slog.Default().With("component", "yrate-st-debug")
 
 // yIncrease is a utility function for yincrease/yrate/ydelta.
