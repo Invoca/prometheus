@@ -14,9 +14,16 @@
 package promql
 
 import (
+	"log/slog"
+
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/util/annotations"
 )
+
+// TODO(sprice): TEMPORARY debug logger for start-timestamp verification.
+// Revert this logger and its call sites once ST integration testing on
+// red.prodref.us-east-1 has validated yrate/yincrease start-timestamp handling.
+var yrateSTLogger = slog.Default().With("component", "yrate-st-debug")
 
 // yIncrease is a utility function for yincrease/yrate/ydelta.
 // It calculates the increase of the range (allowing for counter resets if isCounter is true),
@@ -66,6 +73,17 @@ func yIncrease(points []FPoint, rangeStartMsec, rangeEndMsec int64, isCounter bo
 			if isCounter && isYCounterReset(startTimestamps, prevST, currentST, points[i].T, rangeStartMsec, points[i].F, lastInRange) {
 				// Counter reset: accumulate as if 0 had come before this sample.
 				inRangeResetIncreases += lastInRange
+				// TEMPORARY: log counter reset detection details.
+				stTriggered := startTimestamps != nil && currentST != 0 && currentST != prevST
+				yrateSTLogger.Info("yrate counter reset detected",
+					"value_drop", points[i].F < lastInRange,
+					"st_triggered", stTriggered,
+					"prev_st", prevST,
+					"current_st", currentST,
+					"sample_t", points[i].T,
+					"sample_value", points[i].F,
+					"last_in_range", lastInRange,
+				)
 
 				if !foundInRangeSample {
 					// This reset was *also* the first in-range sample. Since we just counted
@@ -132,8 +150,14 @@ func funcYrate(_ []Vector, matrixVals Matrix, args parser.Expressions, enh *Eval
 func yStartTimestamps(points []FPoint, enh *EvalNodeHelper) []int64 {
 	if enh.StartTimestamps != nil && len(enh.StartTimestamps.Floats) == len(points) {
 		startTimestamps := enh.StartTimestamps.Floats
-		for _, startTimestamp := range startTimestamps {
+		for i, startTimestamp := range startTimestamps {
 			if startTimestamp != 0 {
+				// TEMPORARY: log when start timestamps are found for yrate/yincrease evaluation.
+				yrateSTLogger.Info("start timestamps found for yrate evaluation",
+					"num_points", len(points),
+					"first_nonzero_st_index", i,
+					"first_nonzero_st_value", startTimestamp,
+				)
 				return startTimestamps
 			}
 		}
