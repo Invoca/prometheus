@@ -1,0 +1,26 @@
+FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS compile
+ARG NODE_VERSION=22.22.3
+ARG NODESOURCE_SETUP_SHA256=575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1
+RUN curl -fsSL https://deb.nodesource.com/setup_$(echo $NODE_VERSION | cut -d. -f1).x -o /tmp/nodesource_setup.sh \
+    && echo "${NODESOURCE_SETUP_SHA256}  /tmp/nodesource_setup.sh" | sha256sum -c - \
+    && bash /tmp/nodesource_setup.sh \
+    && rm /tmp/nodesource_setup.sh \
+    && apt-get install -yq nodejs=22.23.2-1nodesource1 build-essential=12.12 \
+    && corepack enable \
+    && corepack prepare pnpm@11.25.0 --activate
+WORKDIR /build
+COPY . .
+RUN make build
+
+FROM quay.io/prometheus/busybox-linux-amd64:latest@sha256:d86ce8f332fdb3b84f73d2fb0953f61bc77374668bac32a15a8a79ec2ed8f0a9
+COPY --from=compile /build/prometheus        /bin/prometheus
+COPY --from=compile /build/promtool          /bin/promtool
+COPY --from=compile /build/documentation/examples/prometheus.yml /etc/prometheus/prometheus.yml
+WORKDIR /prometheus
+RUN chown -R nobody:nobody /etc/prometheus /prometheus
+USER       nobody
+EXPOSE     9090
+VOLUME     [ "/prometheus" ]
+ENTRYPOINT [ "/bin/prometheus" ]
+CMD        [ "--config.file=/etc/prometheus/prometheus.yml", \
+             "--storage.tsdb.path=/prometheus" ]
