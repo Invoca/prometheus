@@ -12,11 +12,8 @@ FROM quay.io/prometheus/busybox-linux-amd64:latest
 COPY --from=compile /build/prometheus        /bin/prometheus
 COPY --from=compile /build/promtool          /bin/promtool
 COPY --from=compile /build/documentation/examples/prometheus.yml /etc/prometheus/prometheus.yml
-COPY --from=compile /build/consoles/                             /usr/share/prometheus/consoles/
-COPY --from=compile /build/console_libraries/                    /usr/share/prometheus/console_libraries/
 WORKDIR /prometheus
-RUN ln -s /usr/share/prometheus/console_libraries /usr/share/prometheus/consoles/ /etc/prometheus/ && \
-    chown -R nobody:nobody /etc/prometheus /prometheus
+RUN chown -R nobody:nobody /etc/prometheus /prometheus
 USER       nobody
 EXPOSE     9090
 VOLUME     [ "/prometheus" ]
