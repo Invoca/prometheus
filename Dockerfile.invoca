@@ -12,7 +12,7 @@ WORKDIR /build
 COPY . .
 RUN make build
 
-FROM quay.io/prometheus/busybox-linux-amd64:latest@sha256:d86ce8f332fdb3b84f73d2fb0953f61bc77374668bac32a15a8a79ec2ed8f0a9
+FROM quay.io/prometheus/busybox-linux-amd64:latest@sha256:267c901b759acf876e23c8d36eb9e50315f7b795d651dc4062d0d02151698e25
 COPY --from=compile /build/prometheus        /bin/prometheus
 COPY --from=compile /build/promtool          /bin/promtool
 COPY --from=compile /build/documentation/examples/prometheus.yml /etc/prometheus/prometheus.yml
