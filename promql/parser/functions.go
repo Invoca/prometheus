@@ -22,7 +22,7 @@ type Function struct {
 	ReturnType   ValueType
 	Experimental bool
 	// ExtRange marks functions that need one extra sample before the range
-	// start (xrate/yrate family).
+	// start (yrate family).
 	ExtRange bool
 }
 
@@ -497,24 +497,6 @@ var Functions = map[string]*Function{
 		Name:       "vector",
 		ArgTypes:   []ValueType{ValueTypeScalar},
 		ReturnType: ValueTypeVector,
-	},
-	"xdelta": {
-		Name:       "xdelta",
-		ArgTypes:   []ValueType{ValueTypeMatrix},
-		ReturnType: ValueTypeVector,
-		ExtRange:   true,
-	},
-	"xincrease": {
-		Name:       "xincrease",
-		ArgTypes:   []ValueType{ValueTypeMatrix},
-		ReturnType: ValueTypeVector,
-		ExtRange:   true,
-	},
-	"xrate": {
-		Name:       "xrate",
-		ArgTypes:   []ValueType{ValueTypeMatrix},
-		ReturnType: ValueTypeVector,
-		ExtRange:   true,
 	},
 	"ydelta": {
 		Name:       "ydelta",
